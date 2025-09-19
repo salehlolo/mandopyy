@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>وصلني - تطبيق العميل</title>
+    <script src="/config.js"></script>
+    <script>
+        const { API_BASE_URL, GOOGLE_MAPS_API_KEY } = window.__APP_CONFIG__ || {};
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -42,11 +46,19 @@
         window.googleMapsReady = new Promise((resolve) => {
             googleMapsResolve = resolve;
         });
-        window.initWaslnyMaps = function () {
-            googleMapsResolve();
-        };
     </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initWaslnyMaps&libraries=geometry,places" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=" defer></script>
+    <script>
+        (function () {
+            const key = GOOGLE_MAPS_API_KEY;
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry`;
+            script.async = true;
+            script.defer = true;
+            script.onload = () => googleMapsResolve?.();
+            document.head.appendChild(script);
+        })();
+    </script>
 </head>
 <body class="overflow-hidden">
     <div id="toast" class="fixed top-6 inset-x-0 flex justify-center pointer-events-none z-50 hidden">
@@ -186,7 +198,6 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        const API_BASE_URL = window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:3000';
         const authContainer = document.getElementById('auth-container');
         const appContainer = document.getElementById('app-container');
         const toast = document.getElementById('toast');
@@ -482,6 +493,11 @@
             }
         }
 
+        function ensureJoinedOrder(orderId) {
+            if (!orderId || !socket) return;
+            socket.emit('order:join', { orderId });
+        }
+
         function setupSocket() {
             if (socket) {
                 socket.disconnect();
@@ -491,18 +507,33 @@
                 console.error('Socket error', err.message);
                 showToast('فقد الاتصال بالخادم. جارٍ إعادة المحاولة...');
             });
-            socket.on('order:status_update', (order) => {
-                if (!order || (activeOrderId && order.id !== activeOrderId)) return;
+            socket.on('order:created', (order) => {
+                if (!order) return;
                 activeOrderId = order.id;
                 activeOrderData = order;
+                ensureJoinedOrder(order.id);
                 handleOrderUpdate(order);
             });
-            socket.on('driver:location_update', (payload) => {
+            socket.on('order:driver_assigned', (order) => {
+                if (!order) return;
+                activeOrderId = order.id;
+                activeOrderData = order;
+                ensureJoinedOrder(order.id);
+                handleOrderUpdate(order);
+            });
+            socket.on('order:status', (order) => {
+                if (!order) return;
+                activeOrderId = order.id;
+                activeOrderData = order;
+                ensureJoinedOrder(order.id);
+                handleOrderUpdate(order);
+            });
+            socket.on('driver:location', (payload) => {
                 if (!payload || payload.orderId !== activeOrderId) return;
                 updateDriverMarker({ lat: payload.lat, lng: payload.lng });
-                if (activeOrderData && activeOrderData.status === 'DRIVER_ASSIGNED') {
+                if (activeOrderData && (activeOrderData.status === 'DRIVER_ASSIGNED' || activeOrderData.status === 'DRIVER_ARRIVED_PICKUP')) {
                     driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.pickup);
-                } else if (activeOrderData && activeOrderData.status === 'PICKED_UP') {
+                } else if (activeOrderData && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED_DROPOFF'].includes(activeOrderData.status)) {
                     driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.dropoff);
                 }
             });
@@ -548,20 +579,46 @@
             if (!pickupCoords || !dropoffCoords) {
                 hydrateOrderOnMap(order);
             }
+            if (order.reason === 'NO_DRIVER') {
+                showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول لاحقاً.', false);
+                resetFlow(true);
+                return;
+            }
+            const statusMessages = {
+                CREATED: 'تم إنشاء الطلب، نبحث عن أقرب مندوب...',
+                SEARCHING_DRIVER: 'جاري البحث عن مندوب...',
+                DRIVER_ASSIGNED: 'المندوب في الطريق لنقطة الاستلام',
+                DRIVER_ARRIVED_PICKUP: 'المندوب وصل لنقطة الاستلام',
+                PICKED_UP: 'تم الاستلام - في الطريق للتسليم',
+                IN_TRANSIT: 'المندوب في الطريق إلى نقطة التسليم',
+                ARRIVED_DROPOFF: 'المندوب وصل إلى نقطة التسليم',
+                DELIVERED: 'تم توصيل الطلب بنجاح',
+                CANCELLED: 'تم إلغاء الطلب'
+            };
+            if (statusMessages[order.status]) {
+                orderStatusEl.textContent = statusMessages[order.status];
+            }
             switch (order.status) {
+                case 'CREATED':
                 case 'SEARCHING_DRIVER':
                     switchSheetState('searching');
-                    orderStatusEl.textContent = 'جاري البحث عن مندوب...';
                     break;
                 case 'DRIVER_ASSIGNED':
                     updateDriverInfo(order.driver);
-                    orderStatusEl.textContent = 'المندوب في الطريق لنقطة الاستلام';
                     driverEtaEl.textContent = '-';
+                    switchSheetState('enRoute');
+                    break;
+                case 'DRIVER_ARRIVED_PICKUP':
+                    updateDriverInfo(order.driver);
                     switchSheetState('enRoute');
                     break;
                 case 'PICKED_UP':
                     updateDriverInfo(order.driver);
-                    orderStatusEl.textContent = 'تم الاستلام - في الطريق للتسليم';
+                    switchSheetState('enRoute');
+                    break;
+                case 'IN_TRANSIT':
+                case 'ARRIVED_DROPOFF':
+                    updateDriverInfo(order.driver);
                     switchSheetState('enRoute');
                     break;
                 case 'DELIVERED':
@@ -604,6 +661,11 @@
                 const data = await response.json();
                 if (!response.ok) {
                     throw new Error(data.error || 'تعذر إنشاء الطلب.');
+                }
+                if (data.reason === 'NO_DRIVER') {
+                    showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول مرة أخرى لاحقاً.', false);
+                    resetFlow(true);
+                    return;
                 }
                 activeOrderId = data.id;
                 activeOrderData = { ...data, pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() }, dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() } };

@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>وصلني - تطبيق السائق</title>
+    <script src="/config.js"></script>
+    <script>
+        const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -182,7 +186,6 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        const API_BASE_URL = window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:3000';
         const toast = document.getElementById('toast');
         const toastMessage = document.getElementById('toast-message');
 
@@ -267,18 +270,43 @@
                 noOrderCard.classList.remove('hidden');
                 markPickedBtn.disabled = true;
                 markDeliveredBtn.disabled = true;
+                delete markPickedBtn.dataset.nextStatus;
+                markPickedBtn.textContent = 'تم الاستلام';
                 return;
             }
             activeOrderCard.classList.remove('hidden');
             noOrderCard.classList.add('hidden');
-            orderStatusChip.textContent = order.status === 'DRIVER_ASSIGNED' ? 'في الطريق للاستلام' : order.status === 'PICKED_UP' ? 'في الطريق للتسليم' : order.status === 'DELIVERED' ? 'مكتمل' : order.status;
+            const statusLabels = {
+                DRIVER_ASSIGNED: 'في الطريق للاستلام',
+                DRIVER_ARRIVED_PICKUP: 'وصلت لنقطة الاستلام',
+                PICKED_UP: 'تم استلام الطلب',
+                IN_TRANSIT: 'في الطريق للتسليم',
+                ARRIVED_DROPOFF: 'وصلت لنقطة التسليم',
+                DELIVERED: 'مكتمل'
+            };
+            orderStatusChip.textContent = statusLabels[order.status] || order.status;
             orderStatusChip.className = 'text-xs px-3 py-1 rounded-full ' + (order.status === 'DELIVERED' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600');
             orderPickupEl.textContent = `(${order.pickup.lat.toFixed(4)}, ${order.pickup.lng.toFixed(4)})`;
             orderDropoffEl.textContent = `(${order.dropoff.lat.toFixed(4)}, ${order.dropoff.lng.toFixed(4)})`;
             orderCustomerEl.textContent = `${order.customer?.phoneNumber || '-'} ${order.customer?.name ? ' - ' + order.customer.name : ''}`;
             orderPriceEl.textContent = order.price ? `${Number(order.price).toFixed(2)} ر.س` : '-';
-            markPickedBtn.disabled = order.status !== 'DRIVER_ASSIGNED';
-            markDeliveredBtn.disabled = order.status !== 'PICKED_UP';
+            const progressConfig = {
+                DRIVER_ASSIGNED: { label: 'وصلت لنقطة الاستلام', status: 'DRIVER_ARRIVED_PICKUP' },
+                DRIVER_ARRIVED_PICKUP: { label: 'تم استلام الطلب', status: 'PICKED_UP' },
+                PICKED_UP: { label: 'بدء التوصيل', status: 'IN_TRANSIT' },
+                IN_TRANSIT: { label: 'وصلت لنقطة التسليم', status: 'ARRIVED_DROPOFF' }
+            };
+            const nextProgress = progressConfig[order.status];
+            if (nextProgress) {
+                markPickedBtn.disabled = false;
+                markPickedBtn.textContent = nextProgress.label;
+                markPickedBtn.dataset.nextStatus = nextProgress.status;
+            } else {
+                markPickedBtn.disabled = true;
+                markPickedBtn.textContent = 'تم الاستلام';
+                delete markPickedBtn.dataset.nextStatus;
+            }
+            markDeliveredBtn.disabled = order.status !== 'ARRIVED_DROPOFF';
         }
 
         function clearActiveOrder() {
@@ -359,6 +387,8 @@
                     if (socket) {
                         socket.emit('order:join', { orderId: data.id });
                     }
+                    updateAvailabilityUI('busy');
+                    startLocationTracking();
                 } else {
                     clearActiveOrder();
                 }
@@ -401,14 +431,15 @@
             socket.on('connect_error', () => {
                 showToast('فقد الاتصال بالخادم.');
             });
-            socket.on('order:assigned', (order) => {
+            socket.on('order:offer', (order) => {
                 if (!order) return;
                 activeOrder = order;
+                socket.emit('order:join', { orderId: order.id });
                 updateActiveOrderCard(order);
                 updateAvailabilityUI('busy');
                 startLocationTracking();
             });
-            socket.on('order:status_update', (order) => {
+            socket.on('order:status', (order) => {
                 if (!order || (activeOrder && order.id !== activeOrder.id)) return;
                 activeOrder = order;
                 updateActiveOrderCard(order);
@@ -416,7 +447,20 @@
                     showToast('تم إنهاء الطلب بنجاح!', false);
                     fetchProfile();
                     clearActiveOrder();
+                } else if (order.status === 'CANCELLED') {
+                    showToast('تم إلغاء الطلب من قبل العميل.', false);
+                    fetchProfile();
+                    clearActiveOrder();
                 }
+            });
+            socket.on('order:cancelled', (order) => {
+                if (!order || (activeOrder && order.id !== activeOrder.id)) return;
+                showToast('تم إلغاء الطلب من قبل العميل.', false);
+                fetchProfile();
+                clearActiveOrder();
+            });
+            socket.on('order:status:update_request', () => {
+                showToast('يرجى تحديث حالة الطلب الحالية.', false);
             });
         }
 
@@ -514,7 +558,9 @@
 
         markPickedBtn.addEventListener('click', () => {
             if (!activeOrder) return;
-            socket.emit('driver:update_status', { orderId: activeOrder.id, status: 'PICKED_UP' });
+            const nextStatus = markPickedBtn.dataset.nextStatus;
+            if (!nextStatus) return;
+            socket.emit('driver:update_status', { orderId: activeOrder.id, status: nextStatus });
         });
 
         markDeliveredBtn.addEventListener('click', () => {

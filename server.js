@@ -1,952 +1,1043 @@
+require('dotenv').config();
+
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const http = require('http');
 const { Server } = require('socket.io');
 const { Client } = require('@googlemaps/google-maps-services-js');
 
+// Centralised configuration so developers can clearly see which environment
+// variables drive runtime behaviour. Defaults keep local development working
+// without real credentials.
+const CONFIG = {
+  port: Number(process.env.PORT || 3000),
+  adminPassword: process.env.ADMIN_PASSWORD || 'change-me',
+  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
+  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
+  twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
+  corsOrigins: (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  searchRadiusKm: Number(process.env.SEARCH_RADIUS_KM || 7),
+  otpExpiryMinutes: Number(process.env.OTP_EXPIRY_MINUTES || 5),
+  otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS || 3),
+  otpRateWindowMinutes: Number(process.env.OTP_RATE_WINDOW_MINUTES || 15)
+};
+
+const ORDER_STATUS = {
+  CREATED: 'CREATED',
+  SEARCHING_DRIVER: 'SEARCHING_DRIVER',
+  DRIVER_ASSIGNED: 'DRIVER_ASSIGNED',
+  DRIVER_ARRIVED_PICKUP: 'DRIVER_ARRIVED_PICKUP',
+  PICKED_UP: 'PICKED_UP',
+  IN_TRANSIT: 'IN_TRANSIT',
+  ARRIVED_DROPOFF: 'ARRIVED_DROPOFF',
+  DELIVERED: 'DELIVERED',
+  CANCELLED: 'CANCELLED'
+};
+
+const ORDER_TRANSITIONS = {
+  [ORDER_STATUS.CREATED]: [ORDER_STATUS.SEARCHING_DRIVER, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.SEARCHING_DRIVER]: [ORDER_STATUS.DRIVER_ASSIGNED, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.DRIVER_ASSIGNED]: [ORDER_STATUS.DRIVER_ARRIVED_PICKUP, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.DRIVER_ARRIVED_PICKUP]: [ORDER_STATUS.PICKED_UP, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.PICKED_UP]: [ORDER_STATUS.IN_TRANSIT, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.IN_TRANSIT]: [ORDER_STATUS.ARRIVED_DROPOFF, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.ARRIVED_DROPOFF]: [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]
+};
+
+class HttpError extends Error {
+  constructor(status, message, extra = {}) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
 const app = express();
-app.use(cors());
+app.use(helmet());
 app.use(express.json());
+
+const allowList = CONFIG.corsOrigins;
+const allowOrigin = (origin, callback) => {
+  if (!origin) {
+    return callback(null, true);
+  }
+  if (!allowList.length || allowList.includes(origin)) {
+    return callback(null, true);
+  }
+  return callback(new Error('Not allowed by CORS'));
+};
+
+app.use(
+  cors({
+    origin: allowOrigin,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: false
+  })
+);
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-    }
+  cors: {
+    origin: allowOrigin,
+    methods: ['GET', 'POST'],
+    credentials: false
+  }
 });
 
-// --- Third-party configuration ---
-// IMPORTANT: keys and secrets should live in environment variables in production.
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || 'YOUR_GOOGLE_MAPS_API_KEY'; // TODO: move to env var
-const googleMapsClient = new Client({});
+const db = new sqlite3.Database(path.join(__dirname, 'delivery_app.db'));
 
-const ADMIN_SECRET_KEY = process.env.ADMIN_PASSWORD || 'supersecretpassword123'; // TODO: move to env var
+const dbRun = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.run(sql, params, function runCallback(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve({ lastID: this.lastID, changes: this.changes });
+      }
+    });
+  });
+
+const dbGet = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row || null);
+      }
+    });
+  });
+
+const dbAll = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+
+async function ensureColumn(table, column, definition) {
+  const info = await dbAll(`PRAGMA table_info(${table})`);
+  const exists = info.some((row) => row.name === column);
+  if (!exists) {
+    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
+async function initDatabase() {
+  await dbRun(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_number TEXT UNIQUE NOT NULL,
+      name TEXT,
+      role TEXT DEFAULT 'customer',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS drivers (
+      user_id INTEGER PRIMARY KEY NOT NULL,
+      vehicle_type TEXT NOT NULL,
+      license_plate TEXT,
+      verified BOOLEAN DEFAULT 0,
+      availability_status TEXT DEFAULT 'offline',
+      last_lat REAL,
+      last_lng REAL,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      driver_id INTEGER,
+      pickup_lat REAL NOT NULL,
+      pickup_lng REAL NOT NULL,
+      dropoff_lat REAL NOT NULL,
+      dropoff_lng REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT '${ORDER_STATUS.CREATED}',
+      price REAL,
+      distance_km REAL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES users (id),
+      FOREIGN KEY (driver_id) REFERENCES drivers (user_id)
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS otps (
+      phone TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      window_start INTEGER NOT NULL
+    )`);
+
+  // Ensure legacy databases pick up any missing columns.
+  await ensureColumn('orders', 'driver_id', 'driver_id INTEGER');
+  await ensureColumn('orders', 'distance_km', 'distance_km REAL');
+  await ensureColumn('orders', 'price', 'price REAL');
+  await ensureColumn('orders', 'status', `status TEXT NOT NULL DEFAULT '${ORDER_STATUS.CREATED}'`);
+  await ensureColumn('drivers', 'availability_status', "availability_status TEXT DEFAULT 'offline'");
+  await ensureColumn('drivers', 'last_lat', 'last_lat REAL');
+  await ensureColumn('drivers', 'last_lng', 'last_lng REAL');
+}
+
+const googleMapsClient = new Client({});
+// Twilio credentials must be provided through environment variables defined in
+// .env. When any of them is missing we automatically run in mock mode so local
+// development can continue without sending real SMS messages.
+const shouldMockTwilio =
+  !CONFIG.twilioAccountSid || !CONFIG.twilioAuthToken || !CONFIG.twilioFromNumber;
+const twilioClient = shouldMockTwilio
+  ? null
+  : require('twilio')(CONFIG.twilioAccountSid, CONFIG.twilioAuthToken);
+
+const sessionStore = new Map();
+const driverSockets = new Map();
+const customerSockets = new Map();
 let adminToken = null;
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID || 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: move to env var
-const authToken = process.env.TWILIO_AUTH_TOKEN || 'your_twilio_auth_token'; // TODO: move to env var
-const twilioClient = require('twilio')(accountSid, authToken);
-const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER || '+15017122661'; // TODO: move to env var
+function createSessionToken(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessionStore.set(token, userId);
+  return token;
+}
 
-const otpStore = {}; // { phoneNumber: { code, expires } }
-const sessionStore = {}; // { token: userId }
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const toRad = (value) => (value * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
-const ORDER_ACTIVE_STATUSES = ['SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'PICKED_UP'];
-const driverSockets = new Map(); // driverId -> socket instance
-const customerSockets = new Map(); // customerId -> socket instance
+async function getUserById(userId) {
+  return dbGet('SELECT * FROM users WHERE id = ?', [userId]);
+}
 
-const db = new sqlite3.Database('./delivery_app.db', (err) => {
-    if (err) {
-        console.error('Error opening database', err.message);
-    } else {
-        console.log('Connected to the SQLite database.');
-        db.serialize(() => {
-            db.run(`CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone_number TEXT UNIQUE NOT NULL,
-                name TEXT,
-                role TEXT DEFAULT 'customer',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
+async function getDriverById(userId) {
+  return dbGet('SELECT * FROM drivers WHERE user_id = ?', [userId]);
+}
 
-            db.run(`CREATE TABLE IF NOT EXISTS drivers (
-                user_id INTEGER PRIMARY KEY NOT NULL,
-                vehicle_type TEXT NOT NULL,
-                license_plate TEXT,
-                verified BOOLEAN DEFAULT 0,
-                availability_status TEXT DEFAULT 'offline',
-                last_lat REAL,
-                last_lng REAL,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            )`);
+async function getOrderDetails(orderId) {
+  const row = await dbGet(
+    `SELECT o.*, 
+            cu.name AS customer_name, cu.phone_number AS customer_phone,
+            du.name AS driver_name, du.phone_number AS driver_phone,
+            d.vehicle_type, d.license_plate
+       FROM orders o
+       JOIN users cu ON cu.id = o.customer_id
+       LEFT JOIN drivers d ON d.user_id = o.driver_id
+       LEFT JOIN users du ON du.id = o.driver_id
+      WHERE o.id = ?`,
+    [orderId]
+  );
 
-            db.run(`CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id INTEGER NOT NULL,
-                driver_id INTEGER,
-                pickup_lat REAL NOT NULL,
-                pickup_lng REAL NOT NULL,
-                dropoff_lat REAL NOT NULL,
-                dropoff_lng REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT 'SEARCHING_DRIVER',
-                price REAL,
-                distance_km REAL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (customer_id) REFERENCES users (id),
-                FOREIGN KEY (driver_id) REFERENCES drivers (user_id)
-            )`);
-        });
+  if (!row) {
+    return null;
+  }
 
-        ensureColumnExists('orders', 'driver_id', 'driver_id INTEGER');
-        ensureColumnExists('orders', 'distance_km', 'distance_km REAL');
-        ensureColumnExists('orders', 'price', 'price REAL');
-        ensureColumnExists('orders', 'status', "status TEXT NOT NULL DEFAULT 'SEARCHING_DRIVER'");
-        ensureColumnExists('drivers', 'availability_status', "availability_status TEXT DEFAULT 'offline'");
-        ensureColumnExists('drivers', 'last_lat', 'last_lat REAL');
-        ensureColumnExists('drivers', 'last_lng', 'last_lng REAL');
-    }
+  return {
+    id: row.id,
+    status: row.status,
+    price: row.price != null ? Number(row.price) : null,
+    distanceKm: row.distance_km != null ? Number(row.distance_km) : null,
+    createdAt: row.created_at,
+    pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
+    dropoff: { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) },
+    customer: {
+      id: row.customer_id,
+      name: row.customer_name || '',
+      phoneNumber: row.customer_phone
+    },
+    driver: row.driver_id
+      ? {
+          id: row.driver_id,
+          name: row.driver_name || '',
+          phoneNumber: row.driver_phone || '',
+          vehicleType: row.vehicle_type || '',
+          licensePlate: row.license_plate || ''
+        }
+      : null
+  };
+}
+
+async function quoteTrip(pickup, dropoff) {
+  if (!CONFIG.googleMapsApiKey) {
+    throw new HttpError(500, 'Google Maps API key is not configured');
+  }
+  const response = await googleMapsClient.directions({
+    params: {
+      origin: pickup,
+      destination: dropoff,
+      key: CONFIG.googleMapsApiKey,
+      mode: 'DRIVING'
+    },
+    timeout: 5000
+  });
+
+  if (!response.data.routes.length) {
+    throw new HttpError(404, 'No route found');
+  }
+
+  const leg = response.data.routes[0].legs[0];
+  const distanceKm = leg.distance.value / 1000;
+  const durationMin = leg.duration.value / 60;
+  const baseFare = 20;
+  const perKmRate = 4;
+  const price = baseFare + distanceKm * perKmRate;
+
+  return {
+    distanceKm: Number(distanceKm.toFixed(2)),
+    durationMin: Number(durationMin.toFixed(0)),
+    price: Number(price.toFixed(2))
+  };
+}
+
+async function enforceOtpRateLimit(phoneNumber) {
+  const key = `otp:${phoneNumber}`;
+  const windowMs = CONFIG.otpRateWindowMinutes * 60 * 1000;
+  const now = Date.now();
+  const record = await dbGet('SELECT * FROM rate_limits WHERE key = ?', [key]);
+  if (!record || now - record.window_start > windowMs) {
+    await dbRun('REPLACE INTO rate_limits (key, count, window_start) VALUES (?, ?, ?)', [
+      key,
+      1,
+      now
+    ]);
+    return;
+  }
+  if (record.count >= CONFIG.otpMaxAttempts) {
+    throw new HttpError(429, 'Too many OTP requests', { reason: 'RATE_LIMIT' });
+  }
+  await dbRun('UPDATE rate_limits SET count = ?, window_start = ? WHERE key = ?', [
+    record.count + 1,
+    record.window_start,
+    key
+  ]);
+}
+
+async function storeOtp(phoneNumber, code) {
+  const expiresAt = Date.now() + CONFIG.otpExpiryMinutes * 60 * 1000;
+  await dbRun('REPLACE INTO otps (phone, code, expires_at) VALUES (?, ?, ?)', [
+    phoneNumber,
+    code,
+    expiresAt
+  ]);
+}
+
+async function consumeOtp(phoneNumber, otpCode) {
+  const record = await dbGet('SELECT * FROM otps WHERE phone = ?', [phoneNumber]);
+  if (!record) {
+    throw new HttpError(400, 'OTP not found or expired');
+  }
+  if (Date.now() > record.expires_at) {
+    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+    throw new HttpError(400, 'OTP not found or expired');
+  }
+  if (record.code !== otpCode) {
+    throw new HttpError(400, 'Invalid OTP code');
+  }
+  await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+  await dbRun('DELETE FROM rate_limits WHERE key = ?', [`otp:${phoneNumber}`]);
+}
+
+function emitToCustomer(customerId, event, payload) {
+  const socket = customerSockets.get(customerId);
+  if (socket) {
+    socket.emit(event, payload);
+  }
+}
+
+function emitToDriver(driverId, event, payload) {
+  const socket = driverSockets.get(driverId);
+  if (socket) {
+    socket.emit(event, payload);
+  }
+}
+
+async function emitOrderStatus(orderId) {
+  const details = await getOrderDetails(orderId);
+  if (!details) {
+    return;
+  }
+  io.to(`order_${orderId}`).emit('order:status', details);
+  emitToCustomer(details.customer.id, 'order:status', details);
+  if (details.driver) {
+    emitToDriver(details.driver.id, 'order:status', details);
+  }
+}
+
+async function requestDriverStatusUpdate(orderId, driverId) {
+  const details = await getOrderDetails(orderId);
+  if (!details) {
+    return;
+  }
+  emitToDriver(driverId, 'order:status:update_request', details);
+}
+
+async function findNearestDriver(pickup) {
+  const drivers = await dbAll(
+    `SELECT user_id, last_lat, last_lng
+       FROM drivers
+      WHERE verified = 1 AND availability_status = 'online'
+        AND last_lat IS NOT NULL AND last_lng IS NOT NULL`
+  );
+
+  const candidates = drivers
+    .map((driver) => ({
+      ...driver,
+      distanceKm: haversineDistance(pickup.lat, pickup.lng, driver.last_lat, driver.last_lng)
+    }))
+    .filter((driver) => driver.distanceKm <= CONFIG.searchRadiusKm)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  return candidates[0] || null;
+}
+
+async function assignDriverToOrder(orderId) {
+  const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+  if (!order || order.status !== ORDER_STATUS.SEARCHING_DRIVER) {
+    return false;
+  }
+
+  const nearestDriver = await findNearestDriver({ lat: order.pickup_lat, lng: order.pickup_lng });
+  if (!nearestDriver) {
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [
+      ORDER_STATUS.CANCELLED,
+      orderId
+    ]);
+    const details = await getOrderDetails(orderId);
+    const payload = details
+      ? { ...details, reason: 'NO_DRIVER' }
+      : { id: orderId, status: order.status, reason: 'NO_DRIVER' };
+    emitToCustomer(order.customer_id, 'order:status', payload);
+    io.to(`order_${orderId}`).emit('order:status', payload);
+    return false;
+  }
+
+  const update = await dbRun(
+    'UPDATE orders SET driver_id = ?, status = ? WHERE id = ? AND status = ?',
+    [nearestDriver.user_id, ORDER_STATUS.DRIVER_ASSIGNED, orderId, ORDER_STATUS.SEARCHING_DRIVER]
+  );
+  if (!update.changes) {
+    return false;
+  }
+
+  await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+    'busy',
+    nearestDriver.user_id
+  ]);
+
+  const details = await getOrderDetails(orderId);
+  if (details) {
+    emitToCustomer(details.customer.id, 'order:driver_assigned', details);
+    emitToDriver(nearestDriver.user_id, 'order:offer', details);
+    io.to(`order_${orderId}`).emit('order:driver_assigned', details);
+    await requestDriverStatusUpdate(orderId, nearestDriver.user_id);
+  }
+
+  return true;
+}
+
+async function assignPendingOrders() {
+  const pending = await dbAll(
+    'SELECT id FROM orders WHERE status = ? ORDER BY created_at ASC',
+    [ORDER_STATUS.SEARCHING_DRIVER]
+  );
+  for (const row of pending) {
+    await assignDriverToOrder(row.id);
+  }
+}
+
+// --- Configuration endpoint shared by the three front-ends ---
+app.get('/config.js', (req, res) => {
+  res.type('application/javascript');
+  res.send(`// generated by server\nwindow.__APP_CONFIG__ = ${JSON.stringify({
+    API_BASE_URL: CONFIG.apiBaseUrl,
+    GOOGLE_MAPS_API_KEY: CONFIG.googleMapsApiKey
+  })};`);
 });
 
-function ensureColumnExists(table, column, definition) {
-    db.all(`PRAGMA table_info(${table})`, (err, rows) => {
-        if (err) {
-            console.error(`Failed to inspect schema for ${table}:`, err.message);
-            return;
-        }
-        const exists = rows.some((row) => row.name === column);
-        if (!exists) {
-            db.run(`ALTER TABLE ${table} ADD COLUMN ${definition}`, (alterErr) => {
-                if (alterErr) {
-                    console.error(`Failed to add column ${column} to ${table}:`, alterErr.message);
-                } else {
-                    console.log(`Added missing column ${column} to ${table}.`);
-                }
-            });
-        }
-    });
-}
+app.use(express.static(path.join(__dirname, 'public')));
 
-function createSessionToken(userId) {
-    const token = crypto.randomBytes(32).toString('hex');
-    sessionStore[token] = userId;
-    return token;
-}
-
-function getOrderDetails(orderId, callback) {
-    const sql = `
-        SELECT o.id, o.customer_id, o.driver_id, o.pickup_lat, o.pickup_lng,
-               o.dropoff_lat, o.dropoff_lng, o.status, o.price, o.distance_km,
-               o.created_at,
-               du.name AS driver_name, du.phone_number AS driver_phone,
-               d.vehicle_type, d.license_plate,
-               cu.name AS customer_name, cu.phone_number AS customer_phone
-        FROM orders o
-        LEFT JOIN drivers d ON o.driver_id = d.user_id
-        LEFT JOIN users du ON d.user_id = du.id
-        LEFT JOIN users cu ON o.customer_id = cu.id
-        WHERE o.id = ?
-    `;
-
-    db.get(sql, [orderId], (err, order) => {
-        if (err) {
-            callback(err);
-            return;
-        }
-        if (!order) {
-            callback(null, null);
-            return;
-        }
-
-        const payload = {
-            id: order.id,
-            customer: {
-                id: order.customer_id,
-                name: order.customer_name || '',
-                phoneNumber: order.customer_phone || ''
-            },
-            status: order.status,
-            price: order.price !== null ? Number(order.price) : null,
-            distanceKm: order.distance_km !== null ? Number(order.distance_km) : null,
-            pickup: { lat: Number(order.pickup_lat), lng: Number(order.pickup_lng) },
-            dropoff: { lat: Number(order.dropoff_lat), lng: Number(order.dropoff_lng) },
-            createdAt: order.created_at,
-            driver: order.driver_id ? {
-                id: order.driver_id,
-                name: order.driver_name || '',
-                phoneNumber: order.driver_phone || '',
-                vehicleType: order.vehicle_type || '',
-                licensePlate: order.license_plate || ''
-            } : null
-        };
-
-        callback(null, payload);
-    });
-}
-
-function emitOrderStatus(orderId) {
-    getOrderDetails(orderId, (err, details) => {
-        if (err) {
-            console.error('Failed to load order details for broadcast:', err.message);
-            return;
-        }
-        if (!details) {
-            return;
-        }
-
-        io.to(`order_${orderId}`).emit('order:status_update', details);
-
-        const customerSocket = customerSockets.get(details.customer.id);
-        if (customerSocket) {
-            customerSocket.emit('order:status_update', details);
-        }
-
-        if (details.driver) {
-            const driverSocket = driverSockets.get(details.driver.id);
-            if (driverSocket) {
-                driverSocket.emit('order:status_update', details);
-                if (details.status === 'DRIVER_ASSIGNED') {
-                    driverSocket.emit('order:assigned', details);
-                }
-            }
-        }
-    });
-}
-
-function assignPendingOrders() {
-    db.all(`SELECT id FROM orders WHERE status = 'SEARCHING_DRIVER' ORDER BY created_at ASC`, (err, rows) => {
-        if (err) {
-            console.error('Failed to fetch pending orders:', err.message);
-            return;
-        }
-        rows.forEach((row) => tryAssignDriver(row.id));
-    });
-}
-
-function tryAssignDriver(orderId) {
-    const sqlOrder = `SELECT id, status FROM orders WHERE id = ?`;
-    db.get(sqlOrder, [orderId], (orderErr, order) => {
-        if (orderErr) {
-            console.error('Failed to load order for assignment:', orderErr.message);
-            return;
-        }
-        if (!order || order.status !== 'SEARCHING_DRIVER') {
-            return;
-        }
-
-        const sqlDriver = `
-            SELECT u.id AS user_id
-            FROM drivers d
-            JOIN users u ON u.id = d.user_id
-            WHERE d.verified = 1 AND d.availability_status = 'online'
-            ORDER BY d.last_lat IS NULL, d.last_lng IS NULL, u.created_at ASC
-            LIMIT 1
-        `;
-
-        db.get(sqlDriver, [], (driverErr, driver) => {
-            if (driverErr) {
-                console.error('Failed to fetch available driver:', driverErr.message);
-                return;
-            }
-            if (!driver) {
-                return;
-            }
-
-            db.serialize(() => {
-                db.run('BEGIN TRANSACTION;');
-                db.run(
-                    "UPDATE orders SET driver_id = ?, status = 'DRIVER_ASSIGNED' WHERE id = ? AND status = 'SEARCHING_DRIVER'",
-                    [driver.user_id, orderId],
-                    function (updateErr) {
-                        if (updateErr || this.changes === 0) {
-                            if (updateErr) {
-                                console.error('Failed to assign driver to order:', updateErr.message);
-                            }
-                            db.run('ROLLBACK;');
-                            return;
-                        }
-
-                        db.run(
-                            "UPDATE drivers SET availability_status = 'busy' WHERE user_id = ?",
-                            [driver.user_id],
-                            (statusErr) => {
-                                if (statusErr) {
-                                    console.error('Failed to mark driver busy:', statusErr.message);
-                                    db.run('ROLLBACK;');
-                                    return;
-                                }
-
-                                db.run('COMMIT;', (commitErr) => {
-                                    if (commitErr) {
-                                        console.error('Commit error while assigning driver:', commitErr.message);
-                                        return;
-                                    }
-
-                                    const driverSocket = driverSockets.get(driver.user_id);
-                                    if (driverSocket) {
-                                        driverSocket.join(`order_${orderId}`);
-                                    }
-                                    emitOrderStatus(orderId);
-                                });
-                            }
-                        );
-                    }
-                );
-            });
-        });
-    });
-}
-
-function hasActiveDriverOrder(driverId, callback) {
-    const sql = `SELECT COUNT(*) AS total FROM orders WHERE driver_id = ? AND status IN ('DRIVER_ASSIGNED', 'PICKED_UP')`;
-    db.get(sql, [driverId], (err, row) => {
-        if (err) {
-            callback(err);
-        } else {
-            callback(null, row.total > 0);
-        }
-    });
-}
+app.get('/health', (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
 // --- Authentication Endpoints ---
-app.post('/api/auth/request-otp', async (req, res) => {
-    const { phoneNumber } = req.body;
+app.post('/api/auth/request-otp', async (req, res, next) => {
+  try {
+    const { phoneNumber } = req.body || {};
     if (!phoneNumber) {
-        return res.status(400).json({ error: 'Phone number is required.' });
+      throw new HttpError(400, 'Phone number is required');
     }
 
+    await enforceOtpRateLimit(phoneNumber);
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-    const expires = Date.now() + 5 * 60 * 1000;
-    otpStore[phoneNumber] = { code: otpCode, expires };
-    console.log(`Generated OTP for ${phoneNumber}: ${otpCode}`);
+    await storeOtp(phoneNumber, otpCode);
 
-    try {
-        await twilioClient.messages.create({
-            body: `رمز التحقق الخاص بك في تطبيق وصلني هو: ${otpCode}`,
-            from: twilioPhoneNumber,
-            to: phoneNumber
-        });
-        res.status(200).json({ success: true, message: 'OTP sent successfully.' });
-    } catch (error) {
-        console.error('Error sending SMS:', error.message);
-        if (error.code === 20003) {
-            console.log('Twilio auth failed, returning simulated success for local testing.');
-            return res.status(200).json({ success: true, message: 'OTP sent successfully (Simulated).' });
-        }
-        res.status(500).json({ error: 'Failed to send OTP.' });
-    }
-});
-
-app.post('/api/auth/verify-otp', (req, res) => {
-    const { phoneNumber, otpCode } = req.body;
-    if (!phoneNumber || !otpCode) {
-        return res.status(400).json({ error: 'Phone number and OTP are required.' });
+    if (shouldMockTwilio) {
+      console.log(`Mock OTP for ${phoneNumber}: ${otpCode}`);
+      return res.json({ success: true, mock: true });
     }
 
-    const storedOtp = otpStore[phoneNumber];
-    if (!storedOtp || storedOtp.code !== otpCode || Date.now() > storedOtp.expires) {
-        return res.status(400).json({ error: 'Invalid or expired OTP.' });
-    }
-
-    delete otpStore[phoneNumber];
-
-    db.get('SELECT * FROM users WHERE phone_number = ?', [phoneNumber], (err, user) => {
-        if (err) {
-            console.error('Database error while verifying OTP:', err.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-
-        const completeLogin = (userId, role, isDriverVerified) => {
-            const token = createSessionToken(userId);
-            res.status(200).json({
-                success: true,
-                message: 'Login successful!',
-                token,
-                role,
-                isDriverVerified
-            });
-        };
-
-        if (user) {
-            db.get('SELECT verified FROM drivers WHERE user_id = ?', [user.id], (driverErr, driver) => {
-                if (driverErr) {
-                    console.error('Database error while reading driver info:', driverErr.message);
-                    return res.status(500).json({ error: 'Database error.' });
-                }
-                completeLogin(user.id, user.role, driver ? !!driver.verified : null);
-            });
-        } else {
-            db.run('INSERT INTO users (phone_number) VALUES (?)', [phoneNumber], function (insertErr) {
-                if (insertErr) {
-                    console.error('Failed to create user record:', insertErr.message);
-                    return res.status(500).json({ error: 'Failed to create user.' });
-                }
-                completeLogin(this.lastID, 'customer', null);
-            });
-        }
+    await twilioClient.messages.create({
+      body: `رمز التحقق الخاص بك في تطبيق وصلني هو: ${otpCode}`,
+      from: CONFIG.twilioFromNumber,
+      to: phoneNumber
     });
+
+    res.json({ success: true, mock: false });
+  } catch (error) {
+    next(error);
+  }
 });
 
-const authenticate = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token || !sessionStore[token]) {
-        return res.status(401).json({ error: 'Unauthorized' });
+app.post('/api/auth/verify-otp', async (req, res, next) => {
+  try {
+    const { phoneNumber, otpCode } = req.body || {};
+    if (!phoneNumber || !otpCode) {
+      throw new HttpError(400, 'Phone number and OTP are required');
     }
-    req.userId = sessionStore[token];
+
+    await consumeOtp(phoneNumber, otpCode);
+    let user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
+    if (!user) {
+      const insert = await dbRun('INSERT INTO users (phone_number) VALUES (?)', [phoneNumber]);
+      user = await getUserById(insert.lastID);
+    }
+
+    const driver = await getDriverById(user.id);
+    const token = createSessionToken(user.id);
+    res.json({
+      success: true,
+      token,
+      role: user.role,
+      isDriverVerified: driver ? Boolean(driver.verified) : null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Auth middleware ---
+async function authenticate(req, res, next) {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token || !sessionStore.has(token)) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+    const userId = sessionStore.get(token);
+    const user = await getUserById(userId);
+    if (!user) {
+      sessionStore.delete(token);
+      throw new HttpError(401, 'Unauthorized');
+    }
+    req.user = user;
     next();
-};
+  } catch (error) {
+    next(error);
+  }
+}
 
 // --- Driver Management ---
-app.post('/api/drivers/register', authenticate, (req, res) => {
-    const userId = req.userId;
-    const { name, vehicleType, licensePlate } = req.body;
-
+app.post('/api/drivers/register', authenticate, async (req, res, next) => {
+  try {
+    const { name, vehicleType, licensePlate } = req.body || {};
     if (!name || !vehicleType || !licensePlate) {
-        return res.status(400).json({ error: 'Name, vehicle type, and license plate are required.' });
+      throw new HttpError(400, 'Name, vehicle type, and license plate are required');
     }
 
-    db.get('SELECT * FROM drivers WHERE user_id = ?', [userId], (err, driver) => {
-        if (err) {
-            console.error('Database error while checking driver registration:', err.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (driver) {
-            return res.status(409).json({ error: 'This user is already registered as a driver.' });
-        }
+    const existingDriver = await getDriverById(req.user.id);
+    if (existingDriver) {
+      throw new HttpError(409, 'Driver already registered');
+    }
 
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION;');
+    await dbRun('UPDATE users SET name = ?, role = ? WHERE id = ?', [
+      name,
+      'driver',
+      req.user.id
+    ]);
+    await dbRun(
+      'INSERT INTO drivers (user_id, vehicle_type, license_plate, verified, availability_status) VALUES (?, ?, ?, 0, ?)',
+      [req.user.id, vehicleType, licensePlate, 'offline']
+    );
 
-            db.run(`UPDATE users SET name = ?, role = 'driver' WHERE id = ?`, [name, userId], (updateUserErr) => {
-                if (updateUserErr) {
-                    console.error('Failed to update user role to driver:', updateUserErr.message);
-                    db.run('ROLLBACK;');
-                    return res.status(500).json({ error: 'Failed to register driver.' });
-                }
-
-                const driverSql = `INSERT INTO drivers (user_id, vehicle_type, license_plate) VALUES (?, ?, ?)`;
-                db.run(driverSql, [userId, vehicleType, licensePlate], (driverInsertErr) => {
-                    if (driverInsertErr) {
-                        console.error('Driver registration error:', driverInsertErr.message);
-                        db.run('ROLLBACK;');
-                        return res.status(500).json({ error: 'Failed to register driver.' });
-                    }
-
-                    db.run('COMMIT;', (commitErr) => {
-                        if (commitErr) {
-                            console.error('Commit error during driver registration:', commitErr.message);
-                            return res.status(500).json({ error: 'Failed to register driver.' });
-                        }
-                        res.status(201).json({ success: true, message: 'Driver registration submitted successfully. Waiting for approval.' });
-                    });
-                });
-            });
-        });
-    });
+    res.status(201).json({ success: true, message: 'Registration submitted.' });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/drivers/me', authenticate, (req, res) => {
-    const userId = req.userId;
-    db.get('SELECT id, phone_number, name, role FROM users WHERE id = ?', [userId], (userErr, user) => {
-        if (userErr) {
-            console.error('Failed to load user profile:', userErr.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (!user) {
-            return res.status(404).json({ error: 'User not found.' });
-        }
-
-        db.get('SELECT user_id, vehicle_type, license_plate, verified, availability_status FROM drivers WHERE user_id = ?', [userId], (driverErr, driver) => {
-            if (driverErr) {
-                console.error('Failed to load driver profile:', driverErr.message);
-                return res.status(500).json({ error: 'Database error.' });
-            }
-
-            res.status(200).json({
-                success: true,
-                user,
-                driver: driver ? {
-                    userId: driver.user_id,
-                    vehicleType: driver.vehicle_type,
-                    licensePlate: driver.license_plate,
-                    verified: !!driver.verified,
-                    availabilityStatus: driver.availability_status
-                } : null
-            });
-        });
+app.get('/api/drivers/me', authenticate, async (req, res, next) => {
+  try {
+    const driver = await getDriverById(req.user.id);
+    res.json({
+      success: true,
+      user: {
+        id: req.user.id,
+        phoneNumber: req.user.phone_number,
+        name: req.user.name,
+        role: req.user.role
+      },
+      driver: driver
+        ? {
+            userId: driver.user_id,
+            vehicleType: driver.vehicle_type,
+            licensePlate: driver.license_plate,
+            verified: Boolean(driver.verified),
+            availabilityStatus: driver.availability_status
+          }
+        : null
     });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/drivers/status', authenticate, (req, res) => {
-    const userId = req.userId;
-    const { status } = req.body;
-
+app.post('/api/drivers/status', authenticate, async (req, res, next) => {
+  try {
+    const { status } = req.body || {};
     if (!status || !['online', 'offline'].includes(status)) {
-        return res.status(400).json({ error: 'Status must be "online" or "offline".' });
+      throw new HttpError(400, 'Status must be "online" or "offline"');
     }
 
-    db.get('SELECT verified FROM drivers WHERE user_id = ?', [userId], (driverErr, driver) => {
-        if (driverErr) {
-            console.error('Failed to read driver status:', driverErr.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (!driver) {
-            return res.status(404).json({ error: 'Driver profile not found.' });
-        }
-        if (!driver.verified) {
-            return res.status(403).json({ error: 'Driver is not verified yet.' });
-        }
+    const driver = await getDriverById(req.user.id);
+    if (!driver) {
+      throw new HttpError(404, 'Driver profile not found');
+    }
+    if (!driver.verified) {
+      throw new HttpError(403, 'Driver not verified');
+    }
 
-        const proceedUpdate = () => {
-            db.run('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [status, userId], (updateErr) => {
-                if (updateErr) {
-                    console.error('Failed to update driver availability:', updateErr.message);
-                    return res.status(500).json({ error: 'Failed to update status.' });
-                }
-                if (status === 'online') {
-                    assignPendingOrders();
-                }
-                res.status(200).json({ success: true, status });
-            });
-        };
+    if (status === 'offline') {
+      const activeOrder = await dbGet(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [req.user.id, ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED, ORDER_STATUS.CREATED]
+      );
+      if (activeOrder) {
+        throw new HttpError(400, 'Cannot go offline while delivering an order');
+      }
+    }
 
-        if (status === 'offline') {
-            hasActiveDriverOrder(userId, (activeErr, hasActive) => {
-                if (activeErr) {
-                    console.error('Failed to validate driver active orders:', activeErr.message);
-                    return res.status(500).json({ error: 'Database error.' });
-                }
-                if (hasActive) {
-                    return res.status(400).json({ error: 'Cannot go offline while delivering an order.' });
-                }
-                proceedUpdate();
-            });
-        } else {
-            proceedUpdate();
-        }
-    });
+    await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+      status,
+      req.user.id
+    ]);
+
+    if (status === 'online') {
+      await assignPendingOrders();
+    }
+
+    res.json({ success: true, status });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/drivers/active-order', authenticate, (req, res) => {
-    const driverId = req.userId;
-    const sql = `SELECT id FROM orders WHERE driver_id = ? AND status IN ('DRIVER_ASSIGNED', 'PICKED_UP') ORDER BY created_at DESC LIMIT 1`;
-    db.get(sql, [driverId], (err, row) => {
-        if (err) {
-            console.error('Failed to fetch active driver order:', err.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (!row) {
-            return res.status(200).json(null);
-        }
-        getOrderDetails(row.id, (detailsErr, details) => {
-            if (detailsErr) {
-                console.error('Failed to load order details:', detailsErr.message);
-                return res.status(500).json({ error: 'Database error.' });
-            }
-            res.status(200).json(details);
-        });
-    });
+app.get('/api/drivers/active-order', authenticate, async (req, res, next) => {
+  try {
+    const row = await dbGet(
+      `SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?) ORDER BY created_at DESC LIMIT 1`,
+      [
+        req.user.id,
+        ORDER_STATUS.DELIVERED,
+        ORDER_STATUS.CANCELLED,
+        ORDER_STATUS.CREATED
+      ]
+    );
+    if (!row) {
+      return res.json(null);
+    }
+    const details = await getOrderDetails(row.id);
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
 });
 
 // --- Orders & Quotes ---
-app.post('/api/quote', authenticate, async (req, res) => {
-    const { pickup, dropoff } = req.body;
+app.post('/api/quote', authenticate, async (req, res, next) => {
+  try {
+    const { pickup, dropoff } = req.body || {};
     if (!pickup || !dropoff) {
-        return res.status(400).json({ error: 'Pickup and dropoff locations are required.' });
+      throw new HttpError(400, 'Pickup and dropoff locations are required');
     }
 
-    try {
-        const directionsResponse = await googleMapsClient.directions({
-            params: {
-                origin: pickup,
-                destination: dropoff,
-                key: GOOGLE_MAPS_API_KEY,
-                mode: 'DRIVING'
-            },
-            timeout: 5000
-        });
-
-        if (!directionsResponse.data.routes.length) {
-            return res.status(404).json({ error: 'Could not find a route.' });
-        }
-
-        const route = directionsResponse.data.routes[0].legs[0];
-        const distanceKm = route.distance.value / 1000;
-        const durationMin = route.duration.value / 60;
-
-        const baseFare = 20;
-        const perKmRate = 4;
-        const price = baseFare + distanceKm * perKmRate;
-
-        res.status(200).json({
-            distanceKm: Number(distanceKm.toFixed(2)),
-            durationMin: Number(durationMin.toFixed(0)),
-            price: Number(price.toFixed(2))
-        });
-    } catch (e) {
-        console.error('Google Maps API error while quoting:', e.message);
-        res.status(500).json({ error: 'Failed to calculate quote.' });
-    }
+    const quote = await quoteTrip(pickup, dropoff);
+    res.json(quote);
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/orders', authenticate, async (req, res) => {
-    const { pickup, dropoff } = req.body;
-    const customerId = req.userId;
-
+app.post('/api/orders', authenticate, async (req, res, next) => {
+  try {
+    const { pickup, dropoff } = req.body || {};
     if (!pickup || !dropoff) {
-        return res.status(400).json({ error: 'Pickup and dropoff locations are required.' });
+      throw new HttpError(400, 'Pickup and dropoff locations are required');
     }
 
-    try {
-        const directionsResponse = await googleMapsClient.directions({
-            params: {
-                origin: pickup,
-                destination: dropoff,
-                key: GOOGLE_MAPS_API_KEY,
-                mode: 'DRIVING'
-            },
-            timeout: 5000
-        });
+    const quote = await quoteTrip(pickup, dropoff);
 
-        if (!directionsResponse.data.routes.length) {
-            return res.status(404).json({ error: 'Could not find a route to create order.' });
-        }
+    const insert = await dbRun(
+      `INSERT INTO orders (customer_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, price, distance_km, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        pickup.lat,
+        pickup.lng,
+        dropoff.lat,
+        dropoff.lng,
+        quote.price,
+        quote.distanceKm,
+        ORDER_STATUS.CREATED
+      ]
+    );
 
-        const route = directionsResponse.data.routes[0].legs[0];
-        const distanceKm = route.distance.value / 1000;
-        const baseFare = 20;
-        const perKmRate = 4;
-        const price = baseFare + distanceKm * perKmRate;
+    const orderId = insert.lastID;
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [
+      ORDER_STATUS.SEARCHING_DRIVER,
+      orderId
+    ]);
 
-        const sql = `
-            INSERT INTO orders (customer_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, price, distance_km, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'SEARCHING_DRIVER')
-        `;
-        const params = [
-            customerId,
-            pickup.lat,
-            pickup.lng,
-            dropoff.lat,
-            dropoff.lng,
-            Number(price.toFixed(2)),
-            Number(distanceKm.toFixed(2))
-        ];
+    const createdDetails = await getOrderDetails(orderId);
+    emitToCustomer(req.user.id, 'order:created', createdDetails);
+    io.to(`order_${orderId}`).emit('order:created', createdDetails);
 
-        db.run(sql, params, function (err) {
-            if (err) {
-                console.error('Failed to create order:', err.message);
-                return res.status(500).json({ error: 'Failed to create order.' });
-            }
+    const assigned = await assignDriverToOrder(orderId);
+    const details = await getOrderDetails(orderId);
 
-            const orderResponse = {
-                id: this.lastID,
-                customerId,
-                pickup,
-                dropoff,
-                price: Number(price.toFixed(2)),
-                distanceKm: Number(distanceKm.toFixed(2)),
-                status: 'SEARCHING_DRIVER'
-            };
-
-            res.status(201).json(orderResponse);
-            tryAssignDriver(this.lastID);
-        });
-    } catch (e) {
-        console.error('Google Maps API error on order creation:', e.message);
-        res.status(500).json({ error: 'Failed to create order due to maps service error.' });
+    if (!assigned) {
+      res.status(202).json({ ...details, reason: 'NO_DRIVER' });
+    } else {
+      res.status(201).json(details);
     }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/orders/:id/cancel', authenticate, (req, res) => {
+app.post('/api/orders/:id/cancel', authenticate, async (req, res, next) => {
+  try {
     const orderId = Number(req.params.id);
-    if (!orderId) {
-        return res.status(400).json({ error: 'Invalid order id.' });
+    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (!order) {
+      throw new HttpError(404, 'Order not found');
+    }
+    if (order.customer_id !== req.user.id) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    if (order.status === ORDER_STATUS.DELIVERED || order.status === ORDER_STATUS.CANCELLED) {
+      throw new HttpError(400, 'Order can no longer be cancelled');
     }
 
-    db.get('SELECT * FROM orders WHERE id = ? AND customer_id = ?', [orderId, req.userId], (err, order) => {
-        if (err) {
-            console.error('Failed to load order for cancellation:', err.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found.' });
-        }
-        if (!['SEARCHING_DRIVER', 'DRIVER_ASSIGNED'].includes(order.status)) {
-            return res.status(400).json({ error: 'Order can no longer be cancelled.' });
-        }
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [ORDER_STATUS.CANCELLED, orderId]);
+    if (order.driver_id) {
+      await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+        'online',
+        order.driver_id
+      ]);
+      emitToDriver(order.driver_id, 'order:cancelled', await getOrderDetails(orderId));
+    }
 
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION;');
-            db.run('UPDATE orders SET status = "CANCELLED" WHERE id = ?', [orderId], (updateErr) => {
-                if (updateErr) {
-                    console.error('Failed to cancel order:', updateErr.message);
-                    db.run('ROLLBACK;');
-                    return res.status(500).json({ error: 'Failed to cancel order.' });
-                }
-
-                const finalize = () => {
-                    db.run('COMMIT;', (commitErr) => {
-                        if (commitErr) {
-                            console.error('Commit error during cancellation:', commitErr.message);
-                            return res.status(500).json({ error: 'Failed to cancel order.' });
-                        }
-                        res.status(200).json({ success: true });
-                        emitOrderStatus(orderId);
-                        assignPendingOrders();
-                    });
-                };
-
-                if (order.driver_id) {
-                    db.run('UPDATE drivers SET availability_status = "online" WHERE user_id = ?', [order.driver_id], (driverErr) => {
-                        if (driverErr) {
-                            console.error('Failed to release driver after cancellation:', driverErr.message);
-                            db.run('ROLLBACK;');
-                            return res.status(500).json({ error: 'Failed to cancel order.' });
-                        }
-                        finalize();
-                    });
-                } else {
-                    finalize();
-                }
-            });
-        });
-    });
+    await emitOrderStatus(orderId);
+    res.json({ success: true });
+    await assignPendingOrders();
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/orders/history', authenticate, (req, res) => {
-    const customerId = req.userId;
-    const sql = `SELECT id, status, price, distance_km, created_at FROM orders WHERE customer_id = ? ORDER BY created_at DESC`;
-    db.all(sql, [customerId], (err, rows) => {
-        if (err) {
-            console.error('Failed to retrieve order history:', err.message);
-            return res.status(500).json({ error: 'Failed to retrieve order history.' });
-        }
-        const formatted = rows.map((row) => ({
-            id: row.id,
-            status: row.status,
-            price: row.price !== null ? Number(row.price) : null,
-            distanceKm: row.distance_km !== null ? Number(row.distance_km) : null,
-            createdAt: row.created_at
-        }));
-        res.status(200).json(formatted);
-    });
+app.get('/api/orders/history', authenticate, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      'SELECT id FROM orders WHERE customer_id = ? ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    const history = [];
+    for (const row of rows) {
+      const details = await getOrderDetails(row.id);
+      if (details) {
+        history.push(details);
+      }
+    }
+    res.json(history);
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/orders/active', authenticate, (req, res) => {
-    const sql = `
-        SELECT id FROM orders
-        WHERE customer_id = ? AND status IN ('SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'PICKED_UP')
-        ORDER BY created_at DESC
-        LIMIT 1
-    `;
-    db.get(sql, [req.userId], (err, row) => {
-        if (err) {
-            console.error('Failed to fetch active order:', err.message);
-            return res.status(500).json({ error: 'Database error.' });
-        }
-        if (!row) {
-            return res.status(200).json(null);
-        }
-        getOrderDetails(row.id, (detailsErr, details) => {
-            if (detailsErr) {
-                console.error('Failed to load active order details:', detailsErr.message);
-                return res.status(500).json({ error: 'Database error.' });
-            }
-            res.status(200).json(details);
-        });
-    });
+app.get('/api/orders/active', authenticate, async (req, res, next) => {
+  try {
+    const row = await dbGet(
+      `SELECT id FROM orders WHERE customer_id = ? AND status NOT IN (?, ?, ?) ORDER BY created_at DESC LIMIT 1`,
+      [
+        req.user.id,
+        ORDER_STATUS.DELIVERED,
+        ORDER_STATUS.CANCELLED,
+        ORDER_STATUS.CREATED
+      ]
+    );
+    if (!row) {
+      return res.json(null);
+    }
+    const details = await getOrderDetails(row.id);
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
 });
 
 // --- Admin Endpoints ---
-app.post('/api/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === ADMIN_SECRET_KEY) {
-        adminToken = crypto.randomBytes(32).toString('hex');
-        res.status(200).json({ success: true, token: adminToken });
-    } else {
-        res.status(401).json({ error: 'Invalid password' });
+app.post('/api/admin/login', async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (password !== CONFIG.adminPassword) {
+      throw new HttpError(401, 'Invalid password');
     }
+    adminToken = crypto.randomBytes(32).toString('hex');
+    res.json({ success: true, token: adminToken });
+  } catch (error) {
+    next(error);
+  }
 });
 
-const authenticateAdmin = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token && token === adminToken) {
-        next();
-    } else {
-        res.status(401).json({ error: 'Unauthorized Admin' });
-    }
-};
+function authenticateAdmin(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token && token === adminToken) {
+    return next();
+  }
+  next(new HttpError(401, 'Unauthorized admin'));
+}
 
-app.get('/api/admin/drivers', authenticateAdmin, (req, res) => {
-    const sql = `
-        SELECT u.id, u.name, u.phone_number, d.vehicle_type, d.license_plate, d.verified, d.availability_status
-        FROM users u
-        JOIN drivers d ON u.id = d.user_id
-        ORDER BY d.verified ASC, u.created_at DESC
-    `;
-    db.all(sql, [], (err, rows) => {
-        if (err) {
-            console.error('Failed to retrieve drivers:', err.message);
-            return res.status(500).json({ error: 'Failed to retrieve drivers.' });
-        }
-        const formatted = rows.map((row) => ({
-            id: row.id,
-            name: row.name,
-            phoneNumber: row.phone_number,
-            vehicleType: row.vehicle_type,
-            licensePlate: row.license_plate,
-            verified: !!row.verified,
-            availabilityStatus: row.availability_status
-        }));
-        res.status(200).json(formatted);
-    });
+app.get('/api/admin/drivers', authenticateAdmin, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT u.id, u.name, u.phone_number, d.vehicle_type, d.license_plate, d.verified, d.availability_status
+         FROM drivers d
+         JOIN users u ON u.id = d.user_id`
+    );
+    const list = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      phoneNumber: row.phone_number,
+      vehicleType: row.vehicle_type,
+      licensePlate: row.license_plate,
+      verified: Boolean(row.verified),
+      availabilityStatus: row.availability_status
+    }));
+    res.json(list);
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/admin/drivers/:id/verify', authenticateAdmin, (req, res) => {
+app.post('/api/admin/drivers/:id/verify', authenticateAdmin, async (req, res, next) => {
+  try {
     const driverId = Number(req.params.id);
-    const { verified } = req.body;
-
-    if (typeof verified !== 'boolean') {
-        return res.status(400).json({ error: 'A boolean "verified" status is required.' });
+    const { verified } = req.body || {};
+    const update = await dbRun('UPDATE drivers SET verified = ? WHERE user_id = ?', [
+      verified ? 1 : 0,
+      driverId
+    ]);
+    if (!update.changes) {
+      throw new HttpError(404, 'Driver not found');
     }
-
-    db.run('UPDATE drivers SET verified = ? WHERE user_id = ?', [verified ? 1 : 0, driverId], function (err) {
-        if (err) {
-            console.error('Failed to update driver verification:', err.message);
-            return res.status(500).json({ error: 'Failed to update driver status.' });
-        }
-        if (this.changes === 0) {
-            return res.status(404).json({ error: 'Driver not found.' });
-        }
-        if (!verified) {
-            db.run('UPDATE drivers SET availability_status = "offline" WHERE user_id = ?', [driverId]);
-        }
-        res.status(200).json({ success: true, message: 'Driver status updated.' });
-        if (verified) {
-            assignPendingOrders();
-        }
-    });
+    if (!verified) {
+      await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+        'offline',
+        driverId
+      ]);
+    } else {
+      await assignPendingOrders();
+    }
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // --- Socket.IO Authentication ---
-io.use((socket, next) => {
+io.use(async (socket, next) => {
+  try {
     const token = socket.handshake.auth?.token;
-    if (!token || !sessionStore[token]) {
-        return next(new Error('Unauthorized'));
+    if (!token || !sessionStore.has(token)) {
+      throw new Error('Unauthorized');
     }
-    const userId = sessionStore[token];
-    db.get('SELECT role FROM users WHERE id = ?', [userId], (err, user) => {
-        if (err || !user) {
-            return next(new Error('Unauthorized'));
-        }
-        socket.data.userId = userId;
-        socket.data.role = user.role;
-        next();
-    });
+    const userId = sessionStore.get(token);
+    const user = await getUserById(userId);
+    if (!user) {
+      sessionStore.delete(token);
+      throw new Error('Unauthorized');
+    }
+    socket.data.userId = userId;
+    socket.data.role = user.role;
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 io.on('connection', (socket) => {
-    const userId = socket.data.userId;
-    const role = socket.data.role;
+  const userId = socket.data.userId;
+  const role = socket.data.role;
 
+  if (role === 'driver') {
+    driverSockets.set(userId, socket);
+  } else {
+    customerSockets.set(userId, socket);
+  }
+
+  socket.on('order:join', async ({ orderId }) => {
+    if (!orderId) {
+      return;
+    }
+    const order = await dbGet('SELECT customer_id, driver_id FROM orders WHERE id = ?', [orderId]);
+    if (!order) {
+      return;
+    }
+    if (order.customer_id === userId || order.driver_id === userId) {
+      socket.join(`order_${orderId}`);
+      const details = await getOrderDetails(orderId);
+      if (details) {
+        socket.emit('order:status', details);
+      }
+    }
+  });
+
+  if (role === 'driver') {
+    socket.on('driver:send_location', async ({ lat, lng }) => {
+      if (typeof lat !== 'number' || typeof lng !== 'number') {
+        return;
+      }
+      await dbRun('UPDATE drivers SET last_lat = ?, last_lng = ? WHERE user_id = ?', [
+        lat,
+        lng,
+        userId
+      ]);
+      const rows = await dbAll(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [
+          userId,
+          ORDER_STATUS.DELIVERED,
+          ORDER_STATUS.CANCELLED,
+          ORDER_STATUS.CREATED
+        ]
+      );
+      for (const row of rows) {
+        const orderDetails = await getOrderDetails(row.id);
+        if (!orderDetails) {
+          continue;
+        }
+        const payload = {
+          orderId: row.id,
+          driverId: userId,
+          lat,
+          lng,
+          updatedAt: new Date().toISOString()
+        };
+        io.to(`order_${row.id}`).emit('driver:location', payload);
+        emitToCustomer(orderDetails.customer.id, 'driver:location', payload);
+      }
+    });
+
+    socket.on('driver:update_status', async ({ orderId, status }) => {
+      if (!orderId || !status) {
+        return;
+      }
+      const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+      if (!order || order.driver_id !== userId) {
+        return;
+      }
+      const allowed = ORDER_TRANSITIONS[order.status] || [];
+      if (!allowed.includes(status)) {
+        return;
+      }
+      await dbRun('UPDATE orders SET status = ? WHERE id = ?', [status, orderId]);
+      if (status === ORDER_STATUS.DELIVERED) {
+        await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+          'online',
+          userId
+        ]);
+        await assignPendingOrders();
+      }
+      await emitOrderStatus(orderId);
+      await requestDriverStatusUpdate(orderId, userId);
+    });
+  }
+
+  socket.on('disconnect', async () => {
     if (role === 'driver') {
-        driverSockets.set(userId, socket);
+      driverSockets.delete(userId);
+      const active = await dbGet(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [
+          userId,
+          ORDER_STATUS.DELIVERED,
+          ORDER_STATUS.CANCELLED,
+          ORDER_STATUS.CREATED
+        ]
+      );
+      if (!active) {
+        await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+          'offline',
+          userId
+        ]);
+      }
     } else {
-        customerSockets.set(userId, socket);
+      customerSockets.delete(userId);
     }
-
-    socket.on('order:join', ({ orderId }) => {
-        if (!orderId) {
-            return;
-        }
-        db.get('SELECT customer_id, driver_id FROM orders WHERE id = ?', [orderId], (err, order) => {
-            if (err || !order) {
-                return;
-            }
-            if (order.customer_id === userId || order.driver_id === userId) {
-                socket.join(`order_${orderId}`);
-                getOrderDetails(orderId, (detailsErr, details) => {
-                    if (!detailsErr && details) {
-                        socket.emit('order:status_update', details);
-                    }
-                });
-            }
-        });
-    });
-
-    if (role === 'driver') {
-        socket.on('driver:send_location', (payload) => {
-            const { lat, lng } = payload || {};
-            if (typeof lat !== 'number' || typeof lng !== 'number') {
-                return;
-            }
-            db.run('UPDATE drivers SET last_lat = ?, last_lng = ? WHERE user_id = ?', [lat, lng, userId], (err) => {
-                if (err) {
-                    console.error('Failed to update driver location:', err.message);
-                }
-            });
-            db.all('SELECT id FROM orders WHERE driver_id = ? AND status IN ("DRIVER_ASSIGNED", "PICKED_UP")', [userId], (err, rows) => {
-                if (err) {
-                    console.error('Failed to fetch orders for location broadcast:', err.message);
-                    return;
-                }
-                rows.forEach((row) => {
-                    io.to(`order_${row.id}`).emit('driver:location_update', {
-                        orderId: row.id,
-                        driverId: userId,
-                        lat,
-                        lng,
-                        updatedAt: new Date().toISOString()
-                    });
-                });
-            });
-        });
-
-        socket.on('driver:update_status', ({ orderId, status }) => {
-            if (!orderId || !status || !['PICKED_UP', 'DELIVERED'].includes(status)) {
-                return;
-            }
-            db.get('SELECT status FROM orders WHERE id = ? AND driver_id = ?', [orderId, userId], (err, order) => {
-                if (err || !order) {
-                    return;
-                }
-
-                const allowedTransitions = {
-                    DRIVER_ASSIGNED: ['PICKED_UP'],
-                    PICKED_UP: ['DELIVERED']
-                };
-                const allowed = allowedTransitions[order.status] || [];
-                if (!allowed.includes(status)) {
-                    return;
-                }
-
-                db.run('UPDATE orders SET status = ? WHERE id = ?', [status, orderId], (updateErr) => {
-                    if (updateErr) {
-                        console.error('Failed to update order status:', updateErr.message);
-                        return;
-                    }
-
-                    if (status === 'DELIVERED') {
-                        db.run('UPDATE drivers SET availability_status = "online" WHERE user_id = ?', [userId], (driverErr) => {
-                            if (driverErr) {
-                                console.error('Failed to set driver online after delivery:', driverErr.message);
-                            }
-                            emitOrderStatus(orderId);
-                            assignPendingOrders();
-                        });
-                    } else {
-                        emitOrderStatus(orderId);
-                    }
-                });
-            });
-        });
-    }
-
-    socket.on('disconnect', () => {
-        if (role === 'driver') {
-            driverSockets.delete(userId);
-            hasActiveDriverOrder(userId, (err, hasActive) => {
-                if (err) {
-                    console.error('Failed to verify driver active orders on disconnect:', err.message);
-                    return;
-                }
-                if (!hasActive) {
-                    db.run('UPDATE drivers SET availability_status = "offline" WHERE user_id = ?', [userId], (updateErr) => {
-                        if (updateErr) {
-                            console.error('Failed to set driver offline on disconnect:', updateErr.message);
-                        }
-                    });
-                }
-            });
-        } else {
-            customerSockets.delete(userId);
-        }
-    });
+  });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+// --- Error handling ---
+// Ensure JSON errors are consistent across the API; stack traces stay in dev only.
+app.use((err, req, res, next) => {
+  const status = err instanceof HttpError ? err.status : err.status || 500;
+  const payload = {
+    status,
+    message: err.message || 'Internal Server Error'
+  };
+  if (err instanceof HttpError && err.extra) {
+    Object.assign(payload, err.extra);
+  }
+  if (process.env.NODE_ENV !== 'production' && err.stack) {
+    payload.stack = err.stack;
+  }
+  res.status(status).json(payload);
 });
+
+async function bootstrap() {
+  try {
+    await initDatabase();
+    server.listen(CONFIG.port, () => {
+      console.log(`Server listening on port ${CONFIG.port}`);
+      console.log(`Allowed CORS origins: ${allowList.length ? allowList.join(', ') : 'none'}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server', error);
+    process.exit(1);
+  }
+}
+
+bootstrap();
