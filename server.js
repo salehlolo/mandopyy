@@ -9,26 +9,34 @@ const crypto = require('crypto');
 const http = require('http');
 const { Server } = require('socket.io');
 const { Client } = require('@googlemaps/google-maps-services-js');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const FacebookStrategy = require('passport-facebook').Strategy;
 
 // Centralised configuration so developers can clearly see which environment
 // variables drive runtime behaviour. Defaults keep local development working
 // without real credentials.
+const rawPort = process.env.PORT || 3000;
 const CONFIG = {
-  port: Number(process.env.PORT || 3000),
+  port: Number(rawPort),
   adminPassword: process.env.ADMIN_PASSWORD || 'change-me',
-  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
+  apiBaseUrl: process.env.API_BASE_URL || `http://localhost:${rawPort}`,
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
-  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
-  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
-  twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
   corsOrigins: (process.env.CORS_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
   searchRadiusKm: Number(process.env.SEARCH_RADIUS_KM || 7),
-  otpExpiryMinutes: Number(process.env.OTP_EXPIRY_MINUTES || 5),
-  otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS || 3),
-  otpRateWindowMinutes: Number(process.env.OTP_RATE_WINDOW_MINUTES || 15)
+  baseUrl: process.env.BASE_URL || `http://localhost:${rawPort}`,
+  frontendUrl: process.env.FRONTEND_URL || `http://localhost:${rawPort}`,
+  jwtSecret: process.env.JWT_SECRET || 'change-me',
+  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  facebookAppId: process.env.FACEBOOK_APP_ID || '',
+  facebookAppSecret: process.env.FACEBOOK_APP_SECRET || ''
 };
 
 const ORDER_STATUS = {
@@ -65,11 +73,29 @@ class HttpError extends Error {
 const app = express();
 app.use(helmet());
 app.use(express.json());
+app.use(
+  session({
+    secret: CONFIG.jwtSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production'
+    }
+  })
+);
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Resolve allowed origins for CORS. If the developer did not provide
 // `CORS_ORIGINS`, we default to local addresses only to avoid exposing the
 // API publicly by accident.
-const defaultCorsOrigins = [`http://localhost:${CONFIG.port}`, `http://127.0.0.1:${CONFIG.port}`];
+const defaultCorsOrigins = [
+  `http://localhost:${CONFIG.port}`,
+  `http://127.0.0.1:${CONFIG.port}`,
+  CONFIG.frontendUrl,
+  CONFIG.apiBaseUrl
+].filter(Boolean);
 const allowList = CONFIG.corsOrigins.length ? CONFIG.corsOrigins : defaultCorsOrigins;
 const uniqueAllowList = [...new Set(allowList)];
 const allowOrigin = (origin, callback) => {
@@ -99,7 +125,20 @@ const io = new Server(server, {
   }
 });
 
-const db = new sqlite3.Database(path.join(__dirname, 'delivery_app.db'));
+const resolvedDbPath = (() => {
+  const customPath = process.env.SQLITE_DB_PATH;
+  if (!customPath) {
+    return path.join(__dirname, 'delivery_app.db');
+  }
+  if (customPath === ':memory:') {
+    return ':memory:';
+  }
+  return path.isAbsolute(customPath)
+    ? customPath
+    : path.join(__dirname, customPath);
+})();
+
+const db = new sqlite3.Database(resolvedDbPath);
 
 const dbRun = (sql, params = []) =>
   new Promise((resolve, reject) => {
@@ -134,6 +173,17 @@ const dbAll = (sql, params = []) =>
     });
   });
 
+const closeDatabase = () =>
+  new Promise((resolve, reject) => {
+    db.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+
 async function ensureColumn(table, column, definition) {
   const info = await dbAll(`PRAGMA table_info(${table})`);
   const exists = info.some((row) => row.name === column);
@@ -142,14 +192,75 @@ async function ensureColumn(table, column, definition) {
   }
 }
 
+async function migrateUsersTable() {
+  const tableExists = await dbGet(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+  );
+  if (!tableExists) {
+    await dbRun(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        phone_number TEXT,
+        name TEXT,
+        role TEXT DEFAULT 'customer',
+        oauth_provider TEXT,
+        oauth_sub TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+  } else {
+    const info = await dbAll('PRAGMA table_info(users)');
+    const columns = info.map((row) => row.name);
+    const phoneColumn = info.find((row) => row.name === 'phone_number');
+    const needsMigration =
+      !columns.includes('email') ||
+      !columns.includes('password_hash') ||
+      !columns.includes('oauth_provider') ||
+      !columns.includes('oauth_sub') ||
+      (phoneColumn && phoneColumn.notnull === 1);
+
+    if (needsMigration) {
+      await dbRun('ALTER TABLE users RENAME TO users_old');
+      await dbRun(`CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT UNIQUE,
+          password_hash TEXT,
+          phone_number TEXT,
+          name TEXT,
+          role TEXT DEFAULT 'customer',
+          oauth_provider TEXT,
+          oauth_sub TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+      await dbRun(`INSERT INTO users (id, email, password_hash, phone_number, name, role, oauth_provider, oauth_sub, created_at)
+                   SELECT id,
+                          NULL,
+                          NULL,
+                          phone_number,
+                          name,
+                          role,
+                          NULL,
+                          NULL,
+                          created_at
+                     FROM users_old`);
+      await dbRun('DROP TABLE users_old');
+    } else {
+      await ensureColumn('users', 'password_hash', 'password_hash TEXT');
+      await ensureColumn('users', 'oauth_provider', 'oauth_provider TEXT');
+      await ensureColumn('users', 'oauth_sub', 'oauth_sub TEXT');
+    }
+  }
+
+  await dbRun(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL'
+  );
+  await dbRun(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number) WHERE phone_number IS NOT NULL'
+  );
+}
+
 async function initDatabase() {
-  await dbRun(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone_number TEXT UNIQUE NOT NULL,
-      name TEXT,
-      role TEXT DEFAULT 'customer',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+  await migrateUsersTable();
 
   await dbRun(`CREATE TABLE IF NOT EXISTS drivers (
       user_id INTEGER PRIMARY KEY NOT NULL,
@@ -178,18 +289,6 @@ async function initDatabase() {
       FOREIGN KEY (driver_id) REFERENCES drivers (user_id)
     )`);
 
-  await dbRun(`CREATE TABLE IF NOT EXISTS otps (
-      phone TEXT PRIMARY KEY,
-      code TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    )`);
-
-  await dbRun(`CREATE TABLE IF NOT EXISTS rate_limits (
-      key TEXT PRIMARY KEY,
-      count INTEGER NOT NULL,
-      window_start INTEGER NOT NULL
-    )`);
-
   // Ensure legacy databases pick up any missing columns.
   await ensureColumn('orders', 'driver_id', 'driver_id INTEGER');
   await ensureColumn('orders', 'distance_km', 'distance_km REAL');
@@ -201,24 +300,17 @@ async function initDatabase() {
 }
 
 const googleMapsClient = new Client({});
-// Twilio credentials must be provided through environment variables defined in
-// .env. When any of them is missing we automatically run in mock mode so local
-// development can continue without sending real SMS messages.
-const shouldMockTwilio =
-  !CONFIG.twilioAccountSid || !CONFIG.twilioAuthToken || !CONFIG.twilioFromNumber;
-const twilioClient = shouldMockTwilio
-  ? null
-  : require('twilio')(CONFIG.twilioAccountSid, CONFIG.twilioAuthToken);
 
-const sessionStore = new Map();
 const driverSockets = new Map();
 const customerSockets = new Map();
 let adminToken = null;
 
-function createSessionToken(userId) {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessionStore.set(token, userId);
-  return token;
+function normaliseEmail(value) {
+  return (value || '').trim().toLowerCase();
+}
+
+function signUserToken(user) {
+  return jwt.sign({ sub: user.id, role: user.role }, CONFIG.jwtSecret, { expiresIn: '7d' });
 }
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -236,6 +328,119 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 
 async function getUserById(userId) {
   return dbGet('SELECT * FROM users WHERE id = ?', [userId]);
+}
+
+async function findUserByEmail(email) {
+  if (!email) {
+    return null;
+  }
+  return dbGet('SELECT * FROM users WHERE email = ?', [email]);
+}
+
+async function upsertOAuthUser({ provider, sub, email, name }) {
+  if (!provider || !sub) {
+    throw new Error('OAuth payload missing provider or subject');
+  }
+  const existingBySub = await dbGet(
+    'SELECT * FROM users WHERE oauth_provider = ? AND oauth_sub = ?',
+    [provider, sub]
+  );
+  if (existingBySub) {
+    if (email && !existingBySub.email) {
+      await dbRun('UPDATE users SET email = ? WHERE id = ?', [email, existingBySub.id]);
+    }
+    if (name && !existingBySub.name) {
+      await dbRun('UPDATE users SET name = ? WHERE id = ?', [name, existingBySub.id]);
+    }
+    return getUserById(existingBySub.id);
+  }
+
+  if (email) {
+    const existingByEmail = await findUserByEmail(email);
+    if (existingByEmail) {
+      await dbRun(
+        'UPDATE users SET oauth_provider = ?, oauth_sub = ? WHERE id = ?',
+        [provider, sub, existingByEmail.id]
+      );
+      if (name && !existingByEmail.name) {
+        await dbRun('UPDATE users SET name = ? WHERE id = ?', [name, existingByEmail.id]);
+      }
+      return getUserById(existingByEmail.id);
+    }
+  }
+
+  const insert = await dbRun(
+    'INSERT INTO users (email, name, role, oauth_provider, oauth_sub) VALUES (?, ?, ?, ?, ?)',
+    [email || null, name || '', 'customer', provider, sub]
+  );
+  return getUserById(insert.lastID);
+}
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await getUserById(id);
+    done(null, user);
+  } catch (error) {
+    done(error);
+  }
+});
+
+if (CONFIG.googleClientId && CONFIG.googleClientSecret) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: CONFIG.googleClientId,
+        clientSecret: CONFIG.googleClientSecret,
+        callbackURL: `${CONFIG.baseUrl}/v1/auth/google/callback`
+      },
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const primaryEmail = profile.emails?.[0]?.value;
+          const user = await upsertOAuthUser({
+            provider: 'google',
+            sub: profile.id,
+            email: primaryEmail ? normaliseEmail(primaryEmail) : null,
+            name: profile.displayName
+          });
+          done(null, user);
+        } catch (error) {
+          done(error);
+        }
+      }
+    )
+  );
+} else {
+  console.warn('Google OAuth credentials are not configured; Google login is disabled.');
+}
+
+if (CONFIG.facebookAppId && CONFIG.facebookAppSecret) {
+  passport.use(
+    new FacebookStrategy(
+      {
+        clientID: CONFIG.facebookAppId,
+        clientSecret: CONFIG.facebookAppSecret,
+        callbackURL: `${CONFIG.baseUrl}/v1/auth/facebook/callback`,
+        profileFields: ['id', 'displayName', 'emails']
+      },
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const primaryEmail = profile.emails?.[0]?.value;
+          const user = await upsertOAuthUser({
+            provider: 'facebook',
+            sub: profile.id,
+            email: primaryEmail ? normaliseEmail(primaryEmail) : null,
+            name: profile.displayName
+          });
+          done(null, user);
+        } catch (error) {
+          done(error);
+        }
+      }
+    )
+  );
+} else {
+  console.warn('Facebook OAuth credentials are not configured; Facebook login is disabled.');
 }
 
 async function getDriverById(userId) {
@@ -315,54 +520,6 @@ async function quoteTrip(pickup, dropoff) {
     durationMin: Number(durationMin.toFixed(0)),
     price: Number(price.toFixed(2))
   };
-}
-
-async function enforceOtpRateLimit(phoneNumber) {
-  const key = `otp:${phoneNumber}`;
-  const windowMs = CONFIG.otpRateWindowMinutes * 60 * 1000;
-  const now = Date.now();
-  const record = await dbGet('SELECT * FROM rate_limits WHERE key = ?', [key]);
-  if (!record || now - record.window_start > windowMs) {
-    await dbRun('REPLACE INTO rate_limits (key, count, window_start) VALUES (?, ?, ?)', [
-      key,
-      1,
-      now
-    ]);
-    return;
-  }
-  if (record.count >= CONFIG.otpMaxAttempts) {
-    throw new HttpError(429, 'Too many OTP requests', { reason: 'RATE_LIMIT' });
-  }
-  await dbRun('UPDATE rate_limits SET count = ?, window_start = ? WHERE key = ?', [
-    record.count + 1,
-    record.window_start,
-    key
-  ]);
-}
-
-async function storeOtp(phoneNumber, code) {
-  const expiresAt = Date.now() + CONFIG.otpExpiryMinutes * 60 * 1000;
-  await dbRun('REPLACE INTO otps (phone, code, expires_at) VALUES (?, ?, ?)', [
-    phoneNumber,
-    code,
-    expiresAt
-  ]);
-}
-
-async function consumeOtp(phoneNumber, otpCode) {
-  const record = await dbGet('SELECT * FROM otps WHERE phone = ?', [phoneNumber]);
-  if (!record) {
-    throw new HttpError(400, 'OTP not found or expired');
-  }
-  if (Date.now() > record.expires_at) {
-    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
-    throw new HttpError(400, 'OTP not found or expired');
-  }
-  if (record.code !== otpCode) {
-    throw new HttpError(400, 'Invalid OTP code');
-  }
-  await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
-  await dbRun('DELETE FROM rate_limits WHERE key = ?', [`otp:${phoneNumber}`]);
 }
 
 function emitToCustomer(customerId, event, payload) {
@@ -493,81 +650,153 @@ app.get('/health', (req, res) => {
 });
 
 // --- Authentication Endpoints ---
-const requestOtpHandler = async (req, res, next) => {
+app.post('/v1/auth/register', async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const phoneNumber = body.phoneNumber || body.phone;
-    if (!phoneNumber) {
-      throw new HttpError(400, 'Phone number is required');
+    const { email, password, name } = req.body || {};
+    const normalisedEmail = normaliseEmail(email);
+    if (!normalisedEmail) {
+      throw new HttpError(400, 'Email is required');
+    }
+    if (!password || password.length < 6) {
+      throw new HttpError(400, 'Password must be at least 6 characters long');
     }
 
-    await enforceOtpRateLimit(phoneNumber);
-    const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-    await storeOtp(phoneNumber, otpCode);
-
-    if (shouldMockTwilio) {
-      console.log(`Mock OTP for ${phoneNumber}: ${otpCode}`);
-      return res.json({ success: true, mock: true });
+    const existing = await findUserByEmail(normalisedEmail);
+    if (existing) {
+      throw new HttpError(409, 'Email is already registered');
     }
 
-    await twilioClient.messages.create({
-      body: `رمز التحقق الخاص بك في تطبيق وصلني هو: ${otpCode}`,
-      from: CONFIG.twilioFromNumber,
-      to: phoneNumber
+    const passwordHash = await bcrypt.hash(password, 10);
+    const insert = await dbRun(
+      'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)',
+      [normalisedEmail, passwordHash, name || '', 'customer']
+    );
+    const user = await getUserById(insert.lastID);
+    const token = signUserToken(user);
+    res.status(201).json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
+      }
     });
-
-    res.json({ success: true, mock: false });
   } catch (error) {
     next(error);
   }
-};
+});
 
-app.post('/api/auth/request-otp', requestOtpHandler);
-app.post('/api/auth/otp/request', requestOtpHandler);
-
-const verifyOtpHandler = async (req, res, next) => {
+app.post('/v1/auth/login', async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const phoneNumber = body.phoneNumber || body.phone;
-    const otpCode = body.otpCode || body.code;
-    if (!phoneNumber || !otpCode) {
-      throw new HttpError(400, 'Phone number and OTP are required');
+    const { email, password } = req.body || {};
+    const normalisedEmail = normaliseEmail(email);
+    if (!normalisedEmail || !password) {
+      throw new HttpError(400, 'Email and password are required');
     }
-
-    await consumeOtp(phoneNumber, otpCode);
-    let user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
-    if (!user) {
-      const insert = await dbRun('INSERT INTO users (phone_number) VALUES (?)', [phoneNumber]);
-      user = await getUserById(insert.lastID);
+    const user = await findUserByEmail(normalisedEmail);
+    if (!user || !user.password_hash) {
+      throw new HttpError(400, 'Invalid credentials');
     }
-
-    const driver = await getDriverById(user.id);
-    const token = createSessionToken(user.id);
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      throw new HttpError(400, 'Invalid credentials');
+    }
+    const token = signUserToken(user);
     res.json({
       success: true,
       token,
-      role: user.role,
-      isDriverVerified: driver ? Boolean(driver.verified) : null
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
+      }
     });
   } catch (error) {
     next(error);
   }
-};
+});
 
-app.post('/api/auth/verify-otp', verifyOtpHandler);
-app.post('/api/auth/otp/verify', verifyOtpHandler);
+if (CONFIG.googleClientId && CONFIG.googleClientSecret) {
+  app.get('/v1/auth/google', (req, res, next) => {
+    const state = req.query.state;
+    passport.authenticate('google', {
+      scope: ['profile', 'email'],
+      state
+    })(req, res, next);
+  });
+  app.get(
+    '/v1/auth/google/callback',
+    passport.authenticate('google', {
+      failureRedirect: `${CONFIG.frontendUrl}/#login_error`
+    }),
+    (req, res) => {
+      const redirectState = req.query.state;
+      const base = CONFIG.frontendUrl.replace(/\/$/, '');
+      const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
+      const token = signUserToken(req.user);
+      res.redirect(`${target}#token=${encodeURIComponent(token)}`);
+    }
+  );
+} else {
+  app.get('/v1/auth/google', (req, res) => {
+    res.status(503).json({ message: 'Google login is not configured' });
+  });
+  app.get('/v1/auth/google/callback', (req, res) => {
+    const redirectState = req.query.state;
+    const base = CONFIG.frontendUrl.replace(/\/$/, '');
+    const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
+    res.redirect(`${target}#login_error`);
+  });
+}
+
+if (CONFIG.facebookAppId && CONFIG.facebookAppSecret) {
+  app.get('/v1/auth/facebook', (req, res, next) => {
+    const state = req.query.state;
+    passport.authenticate('facebook', { scope: ['email'], state })(req, res, next);
+  });
+  app.get(
+    '/v1/auth/facebook/callback',
+    passport.authenticate('facebook', {
+      failureRedirect: `${CONFIG.frontendUrl}/#login_error`
+    }),
+    (req, res) => {
+      const redirectState = req.query.state;
+      const base = CONFIG.frontendUrl.replace(/\/$/, '');
+      const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
+      const token = signUserToken(req.user);
+      res.redirect(`${target}#token=${encodeURIComponent(token)}`);
+    }
+  );
+} else {
+  app.get('/v1/auth/facebook', (req, res) => {
+    res.status(503).json({ message: 'Facebook login is not configured' });
+  });
+  app.get('/v1/auth/facebook/callback', (req, res) => {
+    const redirectState = req.query.state;
+    const base = CONFIG.frontendUrl.replace(/\/$/, '');
+    const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
+    res.redirect(`${target}#login_error`);
+  });
+}
 
 // --- Auth middleware ---
 async function authenticate(req, res, next) {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    if (!token || !sessionStore.has(token)) {
+    if (!token) {
       throw new HttpError(401, 'Unauthorized');
     }
-    const userId = sessionStore.get(token);
-    const user = await getUserById(userId);
+    let payload;
+    try {
+      payload = jwt.verify(token, CONFIG.jwtSecret);
+    } catch (error) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+    const user = await getUserById(payload.sub);
     if (!user) {
-      sessionStore.delete(token);
       throw new HttpError(401, 'Unauthorized');
     }
     req.user = user;
@@ -580,9 +809,9 @@ async function authenticate(req, res, next) {
 // --- Driver Management ---
 app.post('/api/drivers/register', authenticate, async (req, res, next) => {
   try {
-    const { name, vehicleType, licensePlate } = req.body || {};
-    if (!name || !vehicleType || !licensePlate) {
-      throw new HttpError(400, 'Name, vehicle type, and license plate are required');
+    const { name, vehicleType, licensePlate, phoneNumber } = req.body || {};
+    if (!name || !vehicleType || !licensePlate || !phoneNumber) {
+      throw new HttpError(400, 'Name, phone number, vehicle type, and license plate are required');
     }
 
     const existingDriver = await getDriverById(req.user.id);
@@ -590,9 +819,10 @@ app.post('/api/drivers/register', authenticate, async (req, res, next) => {
       throw new HttpError(409, 'Driver already registered');
     }
 
-    await dbRun('UPDATE users SET name = ?, role = ? WHERE id = ?', [
+    await dbRun('UPDATE users SET name = ?, role = ?, phone_number = ? WHERE id = ?', [
       name,
       'driver',
+      phoneNumber,
       req.user.id
     ]);
     await dbRun(
@@ -613,6 +843,7 @@ app.get('/api/drivers/me', authenticate, async (req, res, next) => {
       success: true,
       user: {
         id: req.user.id,
+        email: req.user.email,
         phoneNumber: req.user.phone_number,
         name: req.user.name,
         role: req.user.role
@@ -899,16 +1130,20 @@ app.post('/api/admin/drivers/:id/verify', authenticateAdmin, async (req, res, ne
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
-    if (!token || !sessionStore.has(token)) {
+    if (!token) {
       throw new Error('Unauthorized');
     }
-    const userId = sessionStore.get(token);
-    const user = await getUserById(userId);
+    let payload;
+    try {
+      payload = jwt.verify(token, CONFIG.jwtSecret);
+    } catch (error) {
+      throw new Error('Unauthorized');
+    }
+    const user = await getUserById(payload.sub);
     if (!user) {
-      sessionStore.delete(token);
       throw new Error('Unauthorized');
     }
-    socket.data.userId = userId;
+    socket.data.userId = user.id;
     socket.data.role = user.role;
     next();
   } catch (error) {
@@ -1060,4 +1295,15 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+if (require.main === module) {
+  bootstrap();
+}
+
+module.exports = {
+  app,
+  server,
+  initDatabase,
+  closeDatabase,
+  CONFIG,
+  bootstrap
+};

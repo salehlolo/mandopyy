@@ -10,6 +10,13 @@
 
 2. Create a `.env` file (a template is provided in `.env.example`) and adjust the values as needed. All API keys and secrets must live in this file.
 
+   Key variables:
+
+   - `JWT_SECRET` – signing key for customer/driver JSON Web Tokens.
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` – optional OAuth credentials if you want to enable Google login.
+   - `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` – optional OAuth credentials for Facebook login.
+   - `BASE_URL` / `FRONTEND_URL` – used by the server to build absolute links (e.g. when returning from OAuth flows).
+
 3. Start the server:
 
    ```bash

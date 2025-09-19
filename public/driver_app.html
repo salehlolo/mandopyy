@@ -55,32 +55,35 @@
 
     <!-- Authentication -->
     <div id="auth-container" class="h-screen w-screen flex items-center justify-center p-4">
-        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-5">
             <div class="text-center space-y-2">
                 <div class="flex items-center justify-center gap-2 text-blue-600">
                     <i class="ph ph-steering-wheel text-3xl"></i>
                     <h1 class="text-3xl font-bold">وصلني للسائقين</h1>
                 </div>
-                <p class="text-sm text-slate-500">انضم إلى شبكة التوصيل في ثوانٍ</p>
+                <p class="text-sm text-slate-500" id="auth-subtitle">سجّل دخولك لبدء استقبال الطلبات.</p>
             </div>
-            <div id="phone-state" class="space-y-4">
-                <label class="text-sm text-slate-600">رقم الجوال</label>
-                <input id="phone-input" type="tel" placeholder="05XXXXXXXX" class="w-full border border-slate-200 rounded-xl px-4 py-3 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-                <button id="send-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">إرسال رمز التحقق</button>
+            <div id="auth-alert" class="hidden text-sm text-red-600 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-center"></div>
+            <div id="auth-name-group" class="space-y-2 hidden">
+                <label class="text-sm text-slate-600">الاسم الكامل</label>
+                <input id="auth-name" type="text" placeholder="مثال: أحمد السبيعي" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <div id="otp-state" class="space-y-4 hidden">
-                <div class="text-center">
-                    <h2 class="text-xl font-semibold text-slate-800">أدخل رمز التحقق</h2>
-                    <p class="text-sm text-slate-500">تم إرسال الرمز إلى <span id="user-phone-display" class="font-bold"></span></p>
-                </div>
-                <div class="flex justify-center gap-3">
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <button id="verify-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تأكيد الدخول</button>
-                <button id="back-to-phone-btn" class="w-full text-sm text-slate-500">تغيير رقم الجوال</button>
+            <div class="space-y-2">
+                <label class="text-sm text-slate-600">البريد الإلكتروني</label>
+                <input id="auth-email" type="email" placeholder="driver@example.com" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div class="space-y-2">
+                <label class="text-sm text-slate-600">كلمة المرور</label>
+                <input id="auth-password" type="password" placeholder="••••••••" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <button id="auth-submit" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تسجيل الدخول</button>
+            <p class="text-sm text-slate-500 text-center" id="auth-toggle-text">
+                <span id="auth-toggle-message">جديد في وصلني؟</span>
+                <button type="button" id="auth-toggle" class="text-blue-600 font-semibold">إنشاء حساب جديد</button>
+            </p>
+            <div class="grid gap-2">
+                <button id="auth-google" type="button" class="w-full border border-blue-100 text-slate-700 rounded-xl py-3 font-semibold hover:bg-blue-50 transition">الدخول عبر Google</button>
+                <button id="auth-facebook" type="button" class="w-full border border-blue-100 text-slate-700 rounded-xl py-3 font-semibold hover:bg-blue-50 transition">الدخول عبر Facebook</button>
             </div>
         </div>
     </div>
@@ -106,6 +109,10 @@
                     <div>
                         <label class="block text-sm text-slate-600 mb-1">الاسم الكامل</label>
                         <input id="reg-name" type="text" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">رقم الجوال للتواصل</label>
+                        <input id="reg-phone" type="tel" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="05XXXXXXXX" required>
                     </div>
                     <div>
                         <label class="block text-sm text-slate-600 mb-1">نوع المركبة</label>
@@ -191,14 +198,17 @@
 
         const authContainer = document.getElementById('auth-container');
         const appContainer = document.getElementById('app-container');
-        const phoneState = document.getElementById('phone-state');
-        const otpState = document.getElementById('otp-state');
-        const phoneInput = document.getElementById('phone-input');
-        const sendOtpBtn = document.getElementById('send-otp-btn');
-        const verifyOtpBtn = document.getElementById('verify-otp-btn');
-        const backToPhoneBtn = document.getElementById('back-to-phone-btn');
-        const userPhoneDisplay = document.getElementById('user-phone-display');
-        const otpInputs = [...document.querySelectorAll('.otp-input')];
+        const authAlert = document.getElementById('auth-alert');
+        const authSubmitBtn = document.getElementById('auth-submit');
+        const authToggleBtn = document.getElementById('auth-toggle');
+        const authToggleMessage = document.getElementById('auth-toggle-message');
+        const authSubtitle = document.getElementById('auth-subtitle');
+        const authNameGroup = document.getElementById('auth-name-group');
+        const authNameInput = document.getElementById('auth-name');
+        const authEmailInput = document.getElementById('auth-email');
+        const authPasswordInput = document.getElementById('auth-password');
+        const authGoogleBtn = document.getElementById('auth-google');
+        const authFacebookBtn = document.getElementById('auth-facebook');
 
         const driverNameHeader = document.getElementById('driver-name-header');
         const logoutBtn = document.getElementById('logout-btn');
@@ -207,6 +217,7 @@
         const dashboardView = document.getElementById('dashboard-view');
         const registrationForm = document.getElementById('registration-form');
         const regName = document.getElementById('reg-name');
+        const regPhone = document.getElementById('reg-phone');
         const regVehicle = document.getElementById('reg-vehicle');
         const regPlate = document.getElementById('reg-plate');
         const refreshStatusBtn = document.getElementById('refresh-status-btn');
@@ -224,7 +235,9 @@
         const markPickedBtn = document.getElementById('mark-picked-btn');
         const markDeliveredBtn = document.getElementById('mark-delivered-btn');
 
-        let authToken = null;
+        const DRIVER_TOKEN_KEY = 'driverAuthToken';
+        let authToken = localStorage.getItem(DRIVER_TOKEN_KEY) || '';
+        let authMode = 'login';
         let socket = null;
         let driverProfile = null;
         let activeOrder = null;
@@ -240,6 +253,93 @@
                 toast.classList.add('hidden');
                 toast.classList.remove('opacity-0');
             }, 3200);
+        }
+
+        function setAuthAlert(message, type = 'error') {
+            if (!authAlert) return;
+            if (!message) {
+                authAlert.classList.add('hidden');
+                authAlert.textContent = '';
+                return;
+            }
+            authAlert.textContent = message;
+            authAlert.className = `text-sm px-4 py-3 text-center rounded-2xl ${type === 'success' ? 'text-emerald-600 bg-emerald-50 border border-emerald-100' : 'text-red-600 bg-red-50 border border-red-100'}`;
+            authAlert.classList.remove('hidden');
+        }
+
+        function setAuthToken(token) {
+            authToken = token || '';
+            if (authToken) {
+                localStorage.setItem(DRIVER_TOKEN_KEY, authToken);
+            } else {
+                localStorage.removeItem(DRIVER_TOKEN_KEY);
+            }
+        }
+
+        function updateAuthMode(nextMode) {
+            authMode = nextMode;
+            if (authMode === 'register') {
+                authNameGroup.classList.remove('hidden');
+                authSubmitBtn.textContent = 'إنشاء حساب';
+                authToggleMessage.textContent = 'لدي حساب مسبقًا؟';
+                authToggleBtn.textContent = 'تسجيل الدخول';
+                authSubtitle.textContent = 'أنشئ حسابًا جديدًا وقدم طلب الانضمام كسائق.';
+                authPasswordInput.setAttribute('autocomplete', 'new-password');
+            } else {
+                authNameGroup.classList.add('hidden');
+                authSubmitBtn.textContent = 'تسجيل الدخول';
+                authToggleMessage.textContent = 'جديد في وصلني؟';
+                authToggleBtn.textContent = 'إنشاء حساب جديد';
+                authSubtitle.textContent = 'سجّل دخولك لبدء استقبال الطلبات.';
+                authPasswordInput.setAttribute('autocomplete', 'current-password');
+            }
+            setAuthAlert('');
+        }
+
+        function showAuthScreen(message) {
+            stopLocationTracking();
+            appContainer.classList.add('hidden');
+            authContainer.classList.remove('hidden');
+            updateAuthMode('login');
+            authEmailInput.value = '';
+            authPasswordInput.value = '';
+            authNameInput.value = '';
+            if (message) {
+                setAuthAlert(message);
+            } else {
+                setAuthAlert('');
+            }
+        }
+
+        async function enterApp() {
+            authContainer.classList.add('hidden');
+            appContainer.classList.remove('hidden');
+            setupSocket();
+            await fetchProfile();
+        }
+
+        function forceLogout(message) {
+            setAuthToken('');
+            driverProfile = null;
+            activeOrder = null;
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            showAuthScreen(message || 'انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+        }
+
+        function applyOAuthTokenFromHash() {
+            if (location.hash.startsWith('#token=')) {
+                const tokenValue = decodeURIComponent(location.hash.slice(7));
+                if (tokenValue) {
+                    setAuthToken(tokenValue);
+                }
+                history.replaceState({}, document.title, location.pathname);
+            } else if (location.hash === '#login_error') {
+                setAuthAlert('تعذر تسجيل الدخول عبر الخدمة الخارجية. حاول طريقة أخرى.');
+                history.replaceState({}, document.title, location.pathname);
+            }
         }
 
         function showView(view) {
@@ -345,6 +445,10 @@
                 const response = await fetch(`${API_BASE_URL}/api/drivers/me`, {
                     headers: { Authorization: `Bearer ${authToken}` }
                 });
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
                 if (!response.ok) {
                     throw new Error('تعذر تحميل بيانات الحساب.');
                 }
@@ -379,6 +483,10 @@
                 const response = await fetch(`${API_BASE_URL}/api/drivers/active-order`, {
                     headers: { Authorization: `Bearer ${authToken}` }
                 });
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
                 if (!response.ok) return;
                 const data = await response.json();
                 if (data && data.id) {
@@ -408,6 +516,10 @@
                     body: JSON.stringify({ status })
                 });
                 const data = await response.json();
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
                 if (!response.ok) {
                     throw new Error(data.error || 'تعذر تحديث الحالة.');
                 }
@@ -428,8 +540,12 @@
                 socket.disconnect();
             }
             socket = io(API_BASE_URL, { auth: { token: authToken } });
-            socket.on('connect_error', () => {
-                showToast('فقد الاتصال بالخادم.');
+            socket.on('connect_error', (error) => {
+                if (error?.message === 'Unauthorized') {
+                    forceLogout('يرجى تسجيل الدخول من جديد.');
+                } else {
+                    showToast('فقد الاتصال بالخادم.');
+                }
             });
             socket.on('order:offer', (order) => {
                 if (!order) return;
@@ -464,63 +580,66 @@
             });
         }
 
-        async function sendOtp() {
-            const phone = phoneInput.value.trim();
-            if (phone.length < 9) {
-                showToast('الرجاء إدخال رقم جوال صحيح.');
-                return;
-            }
+        async function submitAuth() {
             try {
-                const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phoneNumber: phone })
-                });
-                if (!response.ok) {
-                    throw new Error('تعذر إرسال رمز التحقق.');
+                if (!API_BASE_URL) {
+                    throw new Error('إعداد الخادم غير مكتمل.');
                 }
-                userPhoneDisplay.textContent = phone;
-                phoneState.classList.add('hidden');
-                otpState.classList.remove('hidden');
-                otpInputs[0].focus();
-            } catch (error) {
-                showToast(error.message || 'حدث خطأ غير متوقع.');
-            }
-        }
-
-        async function verifyOtp() {
-            const otpCode = otpInputs.map((input) => input.value.trim()).join('');
-            if (otpCode.length !== 4) {
-                showToast('الرجاء إدخال رمز مكون من 4 أرقام.');
-                return;
-            }
-            const phone = phoneInput.value.trim();
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+                const email = (authEmailInput.value || '').trim().toLowerCase();
+                const password = authPasswordInput.value || '';
+                if (!email || !password) {
+                    throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
+                }
+                const payload = { email, password };
+                if (authMode === 'register') {
+                    const name = (authNameInput.value || '').trim();
+                    if (!name) {
+                        throw new Error('الرجاء إدخال الاسم الكامل.');
+                    }
+                    payload.name = name;
+                }
+                authSubmitBtn.disabled = true;
+                const endpoint = authMode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phoneNumber: phone, otpCode })
+                    body: JSON.stringify(payload)
                 });
                 const data = await response.json();
                 if (!response.ok) {
-                    throw new Error(data.error || 'فشل تسجيل الدخول.');
+                    throw new Error(data?.message || 'تعذر إكمال العملية.');
                 }
-                authToken = data.token;
-                authContainer.classList.add('hidden');
-                appContainer.classList.remove('hidden');
-                setupSocket();
-                await fetchProfile();
+                if (!data?.token) {
+                    throw new Error('استجابة غير متوقعة من الخادم.');
+                }
+                setAuthToken(data.token);
+                authEmailInput.value = '';
+                authPasswordInput.value = '';
+                authNameInput.value = '';
+                setAuthAlert('');
+                await enterApp();
             } catch (error) {
-                showToast(error.message || 'فشل تسجيل الدخول.');
+                setAuthAlert(error.message || 'حدث خطأ غير متوقع.');
+            } finally {
+                authSubmitBtn.disabled = false;
             }
         }
 
-        sendOtpBtn.addEventListener('click', sendOtp);
-        verifyOtpBtn.addEventListener('click', verifyOtp);
-        backToPhoneBtn.addEventListener('click', () => {
-            otpState.classList.add('hidden');
-            phoneState.classList.remove('hidden');
-            otpInputs.forEach((input) => input.value = '');
+        authSubmitBtn.addEventListener('click', submitAuth);
+        authPasswordInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                submitAuth();
+            }
+        });
+        authToggleBtn.addEventListener('click', () => {
+            updateAuthMode(authMode === 'login' ? 'register' : 'login');
+        });
+        authGoogleBtn.addEventListener('click', () => {
+            window.location.href = '/v1/auth/google?state=driver';
+        });
+        authFacebookBtn.addEventListener('click', () => {
+            window.location.href = '/v1/auth/facebook?state=driver';
         });
 
         registrationForm.addEventListener('submit', async (event) => {
@@ -534,11 +653,16 @@
                     },
                     body: JSON.stringify({
                         name: regName.value.trim(),
+                        phoneNumber: regPhone.value.trim(),
                         vehicleType: regVehicle.value.trim(),
                         licensePlate: regPlate.value.trim()
                     })
                 });
                 const data = await response.json();
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
                 if (!response.ok) {
                     throw new Error(data.error || 'تعذر إرسال طلب التسجيل.');
                 }
@@ -569,37 +693,18 @@
         });
 
         logoutBtn.addEventListener('click', () => {
-            authToken = null;
-            driverProfile = null;
-            activeOrder = null;
-            stopLocationTracking();
-            if (socket) {
-                socket.disconnect();
-                socket = null;
-            }
-            appContainer.classList.add('hidden');
-            authContainer.classList.remove('hidden');
-            phoneState.classList.remove('hidden');
-            otpState.classList.add('hidden');
-            otpInputs.forEach((input) => input.value = '');
-            phoneInput.value = '';
+            forceLogout('تم تسجيل الخروج بنجاح.');
         });
 
-        otpInputs.forEach((input, index) => {
-            input.addEventListener('input', () => {
-                if (input.value.length > 1) {
-                    input.value = input.value.slice(-1);
-                }
-                if (input.value && index < otpInputs.length - 1) {
-                    otpInputs[index + 1].focus();
-                }
+        updateAuthMode(authMode);
+        applyOAuthTokenFromHash();
+        if (authToken) {
+            enterApp().catch(() => {
+                forceLogout('تعذر تسجيل الدخول. حاول مرة أخرى.');
             });
-            input.addEventListener('keydown', (event) => {
-                if (event.key === 'Backspace' && !input.value && index > 0) {
-                    otpInputs[index - 1].focus();
-                }
-            });
-        });
+        } else {
+            showAuthScreen();
+        }
     });
     </script>
 </body>

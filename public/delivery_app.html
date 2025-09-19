@@ -96,6 +96,18 @@
                         <h2 class="text-xl font-semibold text-slate-800">إلى أين تود الإرسال اليوم؟</h2>
                         <p class="text-sm text-slate-500">حرك الخريطة لتحديد نقطتي الاستلام والتسليم</p>
                     </div>
+                    <div class="space-y-3">
+                        <div class="space-y-2">
+                            <span class="text-xs text-slate-500">ابحث عن موقع الاستلام</span>
+                            <input id="pickup-search" type="text" placeholder="اكتب عنوان الاستلام"
+                                   class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-left" />
+                        </div>
+                        <div class="space-y-2">
+                            <span class="text-xs text-slate-500">ابحث عن موقع التسليم</span>
+                            <input id="dropoff-search" type="text" placeholder="اكتب عنوان التسليم"
+                                   class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 text-left" disabled />
+                        </div>
+                    </div>
                     <div class="space-y-2">
                         <div class="flex items-center gap-3 bg-slate-100 rounded-xl px-3 py-2">
                             <i class="ph ph-dot-outline text-blue-600 text-xl"></i>
@@ -118,6 +130,10 @@
                         <div class="flex justify-between text-sm text-slate-600">
                             <span>المسافة</span>
                             <span id="distance-text" class="font-semibold text-slate-800"></span>
+                        </div>
+                        <div class="flex justify-between text-sm text-slate-600">
+                            <span>الوقت المقدر</span>
+                            <span id="duration-text" class="font-semibold text-slate-800">-</span>
                         </div>
                         <div class="flex justify-between text-sm text-slate-600">
                             <span>السعر التقديري</span>
@@ -183,7 +199,10 @@
         const pickupAddressEl = document.getElementById('pickup-address');
         const dropoffAddressEl = document.getElementById('dropoff-address');
         const distanceTextEl = document.getElementById('distance-text');
+        const durationTextEl = document.getElementById('duration-text');
         const priceTextEl = document.getElementById('price-text');
+        const pickupSearchInput = document.getElementById('pickup-search');
+        const dropoffSearchInput = document.getElementById('dropoff-search');
 
         const driverNameEl = document.getElementById('driver-name');
         const driverVehicleEl = document.getElementById('driver-vehicle');
@@ -215,10 +234,16 @@
         let pickupMarker = null;
         let dropoffMarker = null;
         let driverMarker = null;
+        let driverPath = null;
+        let driverPathCoordinates = [];
         let quoteData = null;
         let activeOrderId = null;
         let activeOrderData = null;
         let appState = 'SETTING_PICKUP';
+        let pickupAutocomplete = null;
+        let dropoffAutocomplete = null;
+        let distanceMatrixService = null;
+        let trafficLayer = null;
 
         function showToast(message, isError = true) {
             toastMessage.textContent = message;
@@ -261,7 +286,23 @@
             });
             directionsRenderer.setMap(map);
             geocoder = new google.maps.Geocoder();
+            distanceMatrixService = new google.maps.DistanceMatrixService();
+            trafficLayer = new google.maps.TrafficLayer();
+            trafficLayer.setMap(map);
             mapReady = true;
+
+            if (pickupSearchInput) {
+                pickupAutocomplete = new google.maps.places.Autocomplete(pickupSearchInput, {
+                    fields: ['geometry', 'formatted_address']
+                });
+                pickupAutocomplete.addListener('place_changed', handlePickupPlace);
+            }
+            if (dropoffSearchInput) {
+                dropoffAutocomplete = new google.maps.places.Autocomplete(dropoffSearchInput, {
+                    fields: ['geometry', 'formatted_address']
+                });
+                dropoffAutocomplete.addListener('place_changed', handleDropoffPlace);
+            }
 
             map.addListener('dragstart', () => {
                 confirmLocationsBtn.disabled = false;
@@ -289,6 +330,11 @@
                 driverMarker.setMap(null);
                 driverMarker = null;
             }
+            if (driverPath) {
+                driverPath.setMap(null);
+                driverPath = null;
+                driverPathCoordinates = [];
+            }
             if (directionsRenderer) {
                 directionsRenderer.set('directions', null);
             }
@@ -299,11 +345,19 @@
             pickupCoords = null;
             dropoffCoords = null;
             quoteData = null;
+            durationTextEl.textContent = '-';
             pickupAddressEl.textContent = 'لم يتم تحديد نقطة الاستلام';
             dropoffAddressEl.textContent = 'لم يتم تحديد نقطة التسليم';
             confirmLocationsBtn.disabled = true;
             markerLabel.textContent = 'حدد نقطة الاستلام';
             centerMarker.classList.remove('hidden');
+            if (pickupSearchInput) {
+                pickupSearchInput.value = '';
+            }
+            if (dropoffSearchInput) {
+                dropoffSearchInput.value = '';
+                dropoffSearchInput.disabled = true;
+            }
             resetMapArtifacts();
             switchSheetState('create');
             if (mapReady) {
@@ -323,16 +377,34 @@
             const marker = new google.maps.Marker({
                 position,
                 map,
-                icon: iconBase
+                icon: iconBase,
+                draggable: type !== 'driver'
             });
+            if (type === 'pickup' || type === 'dropoff') {
+                marker.addListener('dragend', (event) => {
+                    const latLng = event.latLng;
+                    if (!latLng) return;
+                    if (type === 'pickup') {
+                        pickupCoords = latLng;
+                        geocodeLatLng({ lat: latLng.lat(), lng: latLng.lng() }, pickupAddressEl);
+                    } else {
+                        dropoffCoords = latLng;
+                        geocodeLatLng({ lat: latLng.lat(), lng: latLng.lng() }, dropoffAddressEl);
+                    }
+                    renderRoute();
+                    requestQuote();
+                    updateDistanceMatrixInfo();
+                });
+            }
             return marker;
         }
 
         function updateDriverMarker(position) {
             if (!mapReady) return;
+            const latLng = new google.maps.LatLng(position.lat, position.lng);
             if (!driverMarker) {
                 driverMarker = new google.maps.Marker({
-                    position,
+                    position: latLng,
                     map,
                     icon: {
                         url: 'https://maps.gstatic.com/mapfiles/ms2/micons/cabs.png',
@@ -340,8 +412,21 @@
                     }
                 });
             } else {
-                driverMarker.setPosition(position);
+                driverMarker.setPosition(latLng);
             }
+            if (!driverPath) {
+                driverPath = new google.maps.Polyline({
+                    map,
+                    strokeColor: '#f97316',
+                    strokeOpacity: 0.75,
+                    strokeWeight: 4
+                });
+            }
+            driverPathCoordinates.push(latLng);
+            if (driverPathCoordinates.length > 60) {
+                driverPathCoordinates.shift();
+            }
+            driverPath.setPath(driverPathCoordinates);
         }
 
         function computeEtaMetersToMinutes(position, target) {
@@ -389,6 +474,8 @@
                 quoteData = data;
                 distanceTextEl.textContent = `${Number(data.distanceKm).toFixed(2)} كم`;
                 priceTextEl.textContent = `${Number(data.price).toFixed(2)} ر.س`;
+                durationTextEl.textContent = '-';
+                updateDistanceMatrixInfo();
             } catch (error) {
                 showToast(error.message || 'حدث خطأ أثناء حساب التسعيرة.');
             }
@@ -409,6 +496,87 @@
             }).catch(() => {
                 showToast('تعذر رسم المسار على الخريطة.');
             });
+        }
+
+        function updateDistanceMatrixInfo() {
+            if (!distanceMatrixService || !pickupCoords || !dropoffCoords) {
+                return;
+            }
+            distanceMatrixService.getDistanceMatrix({
+                origins: [pickupCoords],
+                destinations: [dropoffCoords],
+                travelMode: google.maps.TravelMode.DRIVING,
+                drivingOptions: { departureTime: new Date(), trafficModel: 'bestguess' }
+            }, (response, status) => {
+                if (status !== 'OK' || !response?.rows?.[0]?.elements?.[0]) {
+                    durationTextEl.textContent = 'غير متاح';
+                    return;
+                }
+                const element = response.rows[0].elements[0];
+                if (element.duration_in_traffic?.text) {
+                    durationTextEl.textContent = element.duration_in_traffic.text;
+                } else if (element.duration?.text) {
+                    durationTextEl.textContent = element.duration.text;
+                } else {
+                    durationTextEl.textContent = 'غير متاح';
+                }
+                if (element.distance?.text) {
+                    distanceTextEl.textContent = element.distance.text;
+                }
+            });
+        }
+
+        function handlePickupPlace() {
+            if (!pickupAutocomplete) return;
+            const place = pickupAutocomplete.getPlace();
+            if (!place || !place.geometry?.location) {
+                showToast('تعذر تحديد موقع الاستلام من البحث.');
+                return;
+            }
+            const location = place.geometry.location;
+            pickupCoords = location;
+            if (pickupMarker) {
+                pickupMarker.setPosition(location);
+            } else {
+                pickupMarker = placeMarker('pickup', location);
+            }
+            map.panTo(location);
+            map.setZoom(15);
+            geocodeLatLng({ lat: location.lat(), lng: location.lng() }, pickupAddressEl);
+            appState = 'SETTING_DROPOFF';
+            markerLabel.textContent = 'حدد نقطة التسليم';
+            confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
+            confirmLocationsBtn.disabled = true;
+            centerMarker.classList.remove('hidden');
+            if (dropoffSearchInput) {
+                dropoffSearchInput.disabled = false;
+                dropoffSearchInput.focus();
+            }
+        }
+
+        function handleDropoffPlace() {
+            if (!dropoffAutocomplete) return;
+            const place = dropoffAutocomplete.getPlace();
+            if (!place || !place.geometry?.location) {
+                showToast('تعذر تحديد موقع التسليم من البحث.');
+                return;
+            }
+            const location = place.geometry.location;
+            dropoffCoords = location;
+            if (dropoffMarker) {
+                dropoffMarker.setPosition(location);
+            } else {
+                dropoffMarker = placeMarker('dropoff', location);
+            }
+            map.panTo(location);
+            map.setZoom(15);
+            geocodeLatLng({ lat: location.lat(), lng: location.lng() }, dropoffAddressEl);
+            centerMarker.classList.add('hidden');
+            appState = 'CONFIRMING';
+            renderRoute();
+            requestQuote();
+            updateDistanceMatrixInfo();
+            switchSheetState('confirm');
         }
 
         function ensureJoinedOrder(orderId) {
@@ -489,6 +657,7 @@
             geocodeLatLng(order.pickup, pickupAddressEl);
             geocodeLatLng(order.dropoff, dropoffAddressEl);
             renderRoute();
+            updateDistanceMatrixInfo();
             centerMarker.classList.add('hidden');
         }
 
@@ -629,6 +798,8 @@
                 markerLabel.textContent = 'حدد نقطة التسليم';
                 confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
                 confirmLocationsBtn.disabled = true;
+                dropoffSearchInput.disabled = false;
+                dropoffSearchInput.focus();
             } else if (appState === 'SETTING_DROPOFF') {
                 dropoffCoords = map.getCenter();
                 dropoffMarker = placeMarker('dropoff', dropoffCoords);

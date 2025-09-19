@@ -3,114 +3,191 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>تسجيل الدخول – Mandob</title>
-
-  <!-- تحميل الإعدادات العامة -->
+  <title>تسجيل الدخول – Waslny</title>
   <script src="/config.js"></script>
-
   <style>
-    body{font-family: system-ui,Segoe UI,Roboto,Arial; margin:0; background:#f7f7f8;}
-    .wrap{max-width:420px; margin:6vh auto; background:#fff; padding:24px; border-radius:16px; box-shadow:0 6px 24px rgba(0,0,0,.06);}
-    h1{margin:0 0 8px; font-size:24px}
-    p.hint{margin:0 0 16px; color:#666}
-    label{display:block; margin:12px 0 6px}
-    input,button{width:100%; padding:12px; border-radius:10px; border:1px solid #ddd; font-size:16px}
-    button{background:#0f73ff; color:#fff; border:none; cursor:pointer; margin-top:12px}
-    button:disabled{opacity:.6; cursor:default}
-    .roles{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px}
-    .linkbtn{background:#fff; color:#0f73ff; border:1px solid #0f73ff}
-    .footer{margin-top:16px; font-size:13px; color:#777; text-align:center}
+    :root { color-scheme: light; }
+    body { font-family: 'Tajawal', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f7f7f8; }
+    .wrap { max-width: 420px; margin: 6vh auto; background: #fff; padding: 28px 26px; border-radius: 18px; box-shadow: 0 16px 40px rgba(15,115,255,0.08); }
+    h1 { margin: 0 0 12px; font-size: 26px; color: #0f172a; }
+    p.hint { margin: 0 0 20px; color: #64748b; font-size: 15px; line-height: 1.6; }
+    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #1e293b; }
+    input { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #cbd5f5; background: #f8fafc; font-size: 16px; direction: ltr; text-align: left; }
+    input:focus { outline: none; border-color: #0f73ff; box-shadow: 0 0 0 3px rgba(15,115,255,0.12); }
+    button.primary { width: 100%; padding: 14px; border-radius: 12px; border: none; font-size: 16px; font-weight: 600; background: linear-gradient(135deg,#0f73ff,#2563eb); color: #fff; cursor: pointer; margin-top: 18px; }
+    button.primary:disabled { opacity: .65; cursor: default; }
+    .switcher { margin-top: 12px; font-size: 14px; text-align: center; color: #475569; }
+    .switcher button { background: none; border: none; color: #0f73ff; font-weight: 600; cursor: pointer; padding: 0 4px; }
+    .oauth { margin-top: 18px; display: grid; gap: 10px; }
+    .oauth button { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid #dbeafe; background: #fff; color: #0f172a; font-weight: 600; cursor: pointer; }
+    .roles { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-top: 24px; }
+    .roles button { padding: 12px; border-radius: 12px; border: 1px solid #0f73ff; background: #fff; color: #0f73ff; font-weight: 600; cursor: pointer; }
+    .alert { margin-top: 16px; border-radius: 12px; padding: 12px; font-size: 14px; display: none; }
+    .alert.error { background: rgba(239,68,68,.12); color: #b91c1c; }
+    .alert.success { background: rgba(16,185,129,.12); color: #047857; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>تسجيل العميل</h1>
-    <p class="hint">ادخل رقم جوالك وسنرسل كود تحقق (OTP)</p>
+    <h1 id="form-title">مرحبا بك في Waslny</h1>
+    <p class="hint" id="form-hint">سجّل الدخول ببريدك الإلكتروني أو أنشئ حسابًا جديدًا للبدء بطلب التوصيل.</p>
 
-    <label>رقم الجوال</label>
-    <input id="phone" placeholder="مثال: 01012345678" />
+    <div class="alert" id="form-alert"></div>
 
-    <div id="otpArea" style="display:none">
-      <label>كود التحقق</label>
-      <input id="otp" placeholder="أدخل الكود" />
+    <label for="name-input" id="name-label" style="display:none">الاسم الكامل</label>
+    <input id="name-input" placeholder="مثال: أحمد محمد" autocomplete="name" style="display:none" />
+
+    <label for="email-input">البريد الإلكتروني</label>
+    <input id="email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+
+    <label for="password-input">كلمة المرور</label>
+    <input id="password-input" type="password" placeholder="••••••••" autocomplete="current-password" />
+
+    <button class="primary" id="submit-btn">تسجيل الدخول</button>
+
+    <div class="switcher">
+      ليس لديك حساب؟ <button type="button" id="toggle-mode">إنشاء حساب جديد</button>
     </div>
 
-    <button id="sendOtpBtn">إرسال الكود</button>
-    <button id="verifyBtn" style="display:none">تأكيد الدخول</button>
+    <div class="oauth">
+      <button type="button" id="google-btn">الدخول عبر Google</button>
+      <button type="button" id="facebook-btn">الدخول عبر Facebook</button>
+    </div>
 
     <div class="roles">
-      <button class="linkbtn" id="driverBtn">أنا مندوب</button>
-      <button class="linkbtn" id="adminBtn">لوحة المشرف</button>
+      <button type="button" id="driver-btn">أنا مندوب</button>
+      <button type="button" id="admin-btn">لوحة المشرف</button>
     </div>
-
   </div>
 
   <script>
     const { API_BASE_URL } = window.__APP_CONFIG__ || {};
-    const phoneEl = document.getElementById('phone');
-    const otpEl = document.getElementById('otp');
-    const otpArea = document.getElementById('otpArea');
-    const sendBtn = document.getElementById('sendOtpBtn');
-    const verifyBtn = document.getElementById('verifyBtn');
+    const alertBox = document.getElementById('form-alert');
+    const submitBtn = document.getElementById('submit-btn');
+    const toggleModeBtn = document.getElementById('toggle-mode');
+    const nameInput = document.getElementById('name-input');
+    const nameLabel = document.getElementById('name-label');
+    const emailInput = document.getElementById('email-input');
+    const passwordInput = document.getElementById('password-input');
+    const formTitle = document.getElementById('form-title');
+    const formHint = document.getElementById('form-hint');
 
-    // أزرار التنقّل للأدوار الأخرى
-    document.getElementById('driverBtn').onclick = () => location.href = '/driver_app.html';
-    document.getElementById('adminBtn').onclick  = () => location.href = '/admin_panel.html';
+    let mode = 'login';
 
-    async function requestOtp(phone){
-      if (!API_BASE_URL) throw new Error('إعداد الخادم غير مكتمل.');
-      const r = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ phone })
-      });
-      const data = await r.json();
-      if(!r.ok) throw new Error(data?.message || 'فشل إرسال الكود');
-      return data;
+    function setAlert(message, type = 'error') {
+      if (!message) {
+        alertBox.style.display = 'none';
+        return;
+      }
+      alertBox.textContent = message;
+      alertBox.className = `alert ${type === 'success' ? 'success' : 'error'}`;
+      alertBox.style.display = 'block';
     }
 
-    async function verifyOtp(phone, code){
-      if (!API_BASE_URL) throw new Error('إعداد الخادم غير مكتمل.');
-      const r = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ phone, code, role:'customer' })
-      });
-      const data = await r.json();
-      if(!r.ok) throw new Error(data?.message || 'فشل التحقق');
-      if(data.token){
-        localStorage.setItem('authToken', data.token);
+    function updateMode(nextMode) {
+      mode = nextMode;
+      if (mode === 'register') {
+        formTitle.textContent = 'إنشاء حساب عميل جديد';
+        formHint.textContent = 'أدخل اسمك وبريدك وكلمة المرور لإنشاء حساب والبدء في طلب المندوب.';
+        submitBtn.textContent = 'إنشاء حساب';
+        toggleModeBtn.textContent = 'لدي حساب مسبقًا';
+        nameInput.style.display = 'block';
+        nameLabel.style.display = 'block';
+        passwordInput.autocomplete = 'new-password';
+      } else {
+        formTitle.textContent = 'مرحبًا بعودتك';
+        formHint.textContent = 'سجّل الدخول ببريدك الإلكتروني للمتابعة وطلب المندوب مباشرة.';
+        submitBtn.textContent = 'تسجيل الدخول';
+        toggleModeBtn.textContent = 'إنشاء حساب جديد';
+        nameInput.style.display = 'none';
+        nameLabel.style.display = 'none';
+        passwordInput.autocomplete = 'current-password';
       }
-      location.href = '/delivery_app.html';
+      setAlert('');
     }
 
-    sendBtn.onclick = async () => {
-      const phone = (phoneEl.value || '').trim();
-      if (!phone) return alert('أدخل رقم الجوال');
-      sendBtn.disabled = true;
-      try {
-        const data = await requestOtp(phone);
-        otpArea.style.display = 'block';
-        verifyBtn.style.display = 'inline-block';
-        alert(data.mock ? 'وضع التطوير: تم توليد OTP في الخادم (راجع الـconsole)' : 'تم إرسال الكود');
-      } catch(e){
-        alert(e.message);
-      } finally {
-        sendBtn.disabled = false;
-      }
-    };
+    toggleModeBtn.addEventListener('click', () => {
+      updateMode(mode === 'login' ? 'register' : 'login');
+    });
 
-    verifyBtn.onclick = async () => {
-      const phone = (phoneEl.value || '').trim();
-      const code  = (otpEl.value || '').trim();
-      if (!code) return alert('أدخل كود التحقق');
-      verifyBtn.disabled = true;
+    async function submitForm() {
       try {
-        await verifyOtp(phone, code);
-      } catch(e){
-        alert(e.message);
+        if (!API_BASE_URL) {
+          throw new Error('لم يتم تهيئة الخادم بشكل صحيح.');
+        }
+        const email = (emailInput.value || '').trim().toLowerCase();
+        const password = passwordInput.value || '';
+        if (!email || !password) {
+          throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
+        }
+        submitBtn.disabled = true;
+        const payload = { email, password };
+        if (mode === 'register') {
+          payload.name = (nameInput.value || '').trim();
+          if (!payload.name) {
+            throw new Error('الرجاء إدخال الاسم الكامل.');
+          }
+        }
+        const endpoint = mode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.message || 'تعذر إتمام العملية.');
+        }
+        if (data?.token) {
+          localStorage.setItem('authToken', data.token);
+          setAlert('تم تسجيل الدخول بنجاح، سيتم تحويلك الآن...', 'success');
+          window.location.href = '/delivery_app.html';
+        } else {
+          throw new Error('استجابة غير متوقعة من الخادم.');
+        }
+      } catch (error) {
+        setAlert(error.message || 'حدث خطأ غير متوقع.');
       } finally {
-        verifyBtn.disabled = false;
+        submitBtn.disabled = false;
       }
-    };
+    }
+
+    submitBtn.addEventListener('click', submitForm);
+    passwordInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submitForm();
+      }
+    });
+
+    document.getElementById('google-btn').addEventListener('click', () => {
+      window.location.href = '/v1/auth/google';
+    });
+    document.getElementById('facebook-btn').addEventListener('click', () => {
+      window.location.href = '/v1/auth/facebook';
+    });
+
+    document.getElementById('driver-btn').addEventListener('click', () => {
+      window.location.href = '/driver_app.html';
+    });
+    document.getElementById('admin-btn').addEventListener('click', () => {
+      window.location.href = '/admin_panel.html';
+    });
+
+    if (location.hash.startsWith('#token=')) {
+      const tokenValue = decodeURIComponent(location.hash.slice(7));
+      if (tokenValue) {
+        localStorage.setItem('authToken', tokenValue);
+        location.replace('/delivery_app.html');
+      } else {
+        location.hash = '';
+      }
+    } else if (location.hash === '#login_error') {
+      setAlert('تعذر تسجيل الدخول عبر الخدمة الخارجية. حاول طريقة أخرى.');
+      history.replaceState({}, document.title, location.pathname);
+    }
+
+    updateMode('login');
   </script>
 </body>
 </html>
