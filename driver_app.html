@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>وصلني - تطبيق السائق</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        html, body {
+            font-family: 'Tajawal', 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
+        .toggle {
+            width: 52px;
+            height: 28px;
+        }
+        .toggle input { display: none; }
+        .toggle .slider {
+            background-color: #cbd5f5;
+            border-radius: 9999px;
+            position: relative;
+            transition: background-color 0.3s ease;
+        }
+        .toggle .slider::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 9999px;
+            background-color: #fff;
+            top: 2px;
+            right: 2px;
+            transition: transform 0.3s ease;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+        }
+        .toggle input:checked + .slider {
+            background-color: #2563eb;
+        }
+        .toggle input:checked + .slider::after {
+            transform: translateX(-24px);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="toast" class="fixed top-6 inset-x-0 flex justify-center z-50 pointer-events-none hidden">
+        <div id="toast-message" class="px-4 py-2 rounded-full text-white text-sm shadow-lg"></div>
+    </div>
+
+    <!-- Authentication -->
+    <div id="auth-container" class="h-screen w-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">
+            <div class="text-center space-y-2">
+                <div class="flex items-center justify-center gap-2 text-blue-600">
+                    <i class="ph ph-steering-wheel text-3xl"></i>
+                    <h1 class="text-3xl font-bold">وصلني للسائقين</h1>
+                </div>
+                <p class="text-sm text-slate-500">انضم إلى شبكة التوصيل في ثوانٍ</p>
+            </div>
+            <div id="phone-state" class="space-y-4">
+                <label class="text-sm text-slate-600">رقم الجوال</label>
+                <input id="phone-input" type="tel" placeholder="05XXXXXXXX" class="w-full border border-slate-200 rounded-xl px-4 py-3 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                <button id="send-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">إرسال رمز التحقق</button>
+            </div>
+            <div id="otp-state" class="space-y-4 hidden">
+                <div class="text-center">
+                    <h2 class="text-xl font-semibold text-slate-800">أدخل رمز التحقق</h2>
+                    <p class="text-sm text-slate-500">تم إرسال الرمز إلى <span id="user-phone-display" class="font-bold"></span></p>
+                </div>
+                <div class="flex justify-center gap-3">
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <button id="verify-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تأكيد الدخول</button>
+                <button id="back-to-phone-btn" class="w-full text-sm text-slate-500">تغيير رقم الجوال</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App -->
+    <div id="app-container" class="hidden min-h-screen bg-slate-100">
+        <header class="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-500">مرحباً، <span id="driver-name-header" class="font-semibold text-slate-700">سائق</span></p>
+                <p class="text-sm text-slate-400">تأكد من تحديث حالتك لتلقي الطلبات الجديدة</p>
+            </div>
+            <button id="logout-btn" class="flex items-center gap-2 text-sm text-red-500 hover:text-red-600">
+                <i class="ph ph-sign-out"></i>
+                <span>تسجيل الخروج</span>
+            </button>
+        </header>
+
+        <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+            <section id="registration-view" class="hidden bg-white rounded-3xl shadow p-6 space-y-4">
+                <h2 class="text-xl font-semibold text-slate-800 flex items-center gap-2"><i class="ph ph-identification-card text-blue-600"></i>تسجيل كسائق</h2>
+                <p class="text-sm text-slate-500">أدخل بياناتك بدقة ليتمكن فريق الدعم من مراجعتها والموافقة عليها.</p>
+                <form id="registration-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">الاسم الكامل</label>
+                        <input id="reg-name" type="text" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">نوع المركبة</label>
+                        <select id="reg-vehicle" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                            <option value="">اختر نوع المركبة</option>
+                            <option value="سيارة">سيارة</option>
+                            <option value="دراجة نارية">دراجة نارية</option>
+                            <option value="شاحنة خفيفة">شاحنة خفيفة</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">رقم اللوحة</label>
+                        <input id="reg-plate" type="text" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="مثال: أ ب ج 1234" required>
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl hover:bg-blue-700 transition">إرسال الطلب للمراجعة</button>
+                </form>
+            </section>
+
+            <section id="pending-view" class="hidden bg-white rounded-3xl shadow p-6 space-y-4 text-center">
+                <i class="ph ph-hourglass-medium text-4xl text-blue-500 mx-auto"></i>
+                <h2 class="text-xl font-semibold text-slate-800">طلبك قيد المراجعة</h2>
+                <p class="text-sm text-slate-500">سيتم إشعارك فور اعتماد حسابك من قبل الإدارة. نشكرك على صبرك.</p>
+                <button id="refresh-status-btn" class="mx-auto inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"><i class="ph ph-arrow-clockwise"></i>تحديث الحالة</button>
+            </section>
+
+            <section id="dashboard-view" class="hidden space-y-6">
+                <div class="bg-white rounded-3xl shadow p-6 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-xs text-slate-500">الحالة الحالية</p>
+                            <p id="availability-text" class="text-lg font-semibold text-slate-800">غير متصل</p>
+                        </div>
+                        <label class="toggle inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="availability-toggle">
+                            <span class="slider block toggle"></span>
+                        </label>
+                    </div>
+                    <p id="location-status" class="text-xs text-slate-400">الموقع غير مفعّل</p>
+                </div>
+
+                <div id="no-order-card" class="bg-white rounded-3xl shadow p-6 text-center space-y-3">
+                    <i class="ph ph-map-trifold text-4xl text-slate-300 mx-auto"></i>
+                    <h3 class="text-lg font-semibold text-slate-700">لا توجد طلبات نشطة</h3>
+                    <p class="text-sm text-slate-500">عندما تكون متاحاً، سيتم توجيه أقرب طلب مناسب إليك فوراً.</p>
+                </div>
+
+                <div id="active-order-card" class="hidden bg-white rounded-3xl shadow p-6 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2"><i class="ph ph-navigation-arrow text-blue-600"></i>طلب نشط</h3>
+                        <span id="order-status-chip" class="text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">جديد</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                            <p class="text-xs text-slate-500 mb-1">نقطة الاستلام</p>
+                            <p id="order-pickup" class="font-semibold text-slate-800">-</p>
+                        </div>
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                            <p class="text-xs text-slate-500 mb-1">نقطة التسليم</p>
+                            <p id="order-dropoff" class="font-semibold text-slate-800">-</p>
+                        </div>
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                            <p class="text-xs text-slate-500 mb-1">بيانات العميل</p>
+                            <p id="order-customer" class="font-semibold text-slate-800">-</p>
+                        </div>
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                            <p class="text-xs text-slate-500 mb-1">التسعيرة</p>
+                            <p id="order-price" class="font-semibold text-slate-800">-</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col md:flex-row gap-3">
+                        <button id="mark-picked-btn" class="flex-1 bg-amber-500 text-white font-semibold py-3 rounded-2xl hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم الاستلام</button>
+                        <button id="mark-delivered-btn" class="flex-1 bg-emerald-500 text-white font-semibold py-3 rounded-2xl hover:bg-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم التسليم</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_BASE_URL = window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:3000';
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+
+        const authContainer = document.getElementById('auth-container');
+        const appContainer = document.getElementById('app-container');
+        const phoneState = document.getElementById('phone-state');
+        const otpState = document.getElementById('otp-state');
+        const phoneInput = document.getElementById('phone-input');
+        const sendOtpBtn = document.getElementById('send-otp-btn');
+        const verifyOtpBtn = document.getElementById('verify-otp-btn');
+        const backToPhoneBtn = document.getElementById('back-to-phone-btn');
+        const userPhoneDisplay = document.getElementById('user-phone-display');
+        const otpInputs = [...document.querySelectorAll('.otp-input')];
+
+        const driverNameHeader = document.getElementById('driver-name-header');
+        const logoutBtn = document.getElementById('logout-btn');
+        const registrationView = document.getElementById('registration-view');
+        const pendingView = document.getElementById('pending-view');
+        const dashboardView = document.getElementById('dashboard-view');
+        const registrationForm = document.getElementById('registration-form');
+        const regName = document.getElementById('reg-name');
+        const regVehicle = document.getElementById('reg-vehicle');
+        const regPlate = document.getElementById('reg-plate');
+        const refreshStatusBtn = document.getElementById('refresh-status-btn');
+
+        const availabilityToggle = document.getElementById('availability-toggle');
+        const availabilityText = document.getElementById('availability-text');
+        const locationStatus = document.getElementById('location-status');
+        const noOrderCard = document.getElementById('no-order-card');
+        const activeOrderCard = document.getElementById('active-order-card');
+        const orderStatusChip = document.getElementById('order-status-chip');
+        const orderPickupEl = document.getElementById('order-pickup');
+        const orderDropoffEl = document.getElementById('order-dropoff');
+        const orderCustomerEl = document.getElementById('order-customer');
+        const orderPriceEl = document.getElementById('order-price');
+        const markPickedBtn = document.getElementById('mark-picked-btn');
+        const markDeliveredBtn = document.getElementById('mark-delivered-btn');
+
+        let authToken = null;
+        let socket = null;
+        let driverProfile = null;
+        let activeOrder = null;
+        let locationWatchId = null;
+        let lastLocation = null;
+
+        function showToast(message, isError = true) {
+            toastMessage.textContent = message;
+            toastMessage.className = `px-4 py-2 rounded-full text-sm shadow-lg ${isError ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('opacity-0'), 50);
+            setTimeout(() => {
+                toast.classList.add('hidden');
+                toast.classList.remove('opacity-0');
+            }, 3200);
+        }
+
+        function showView(view) {
+            registrationView.classList.add('hidden');
+            pendingView.classList.add('hidden');
+            dashboardView.classList.add('hidden');
+            if (view === 'registration') registrationView.classList.remove('hidden');
+            if (view === 'pending') pendingView.classList.remove('hidden');
+            if (view === 'dashboard') dashboardView.classList.remove('hidden');
+        }
+
+        function updateAvailabilityUI(status) {
+            availabilityText.textContent = status === 'online' ? 'متصل ويستقبل طلبات' : status === 'busy' ? 'في مهمة حالية' : 'غير متصل';
+            availabilityToggle.checked = status === 'online' || status === 'busy';
+            availabilityToggle.disabled = status === 'busy';
+            if (status === 'busy') {
+                locationStatus.textContent = 'يتم تتبع موقعك أثناء تنفيذ الطلب.';
+            } else if (status === 'online') {
+                locationStatus.textContent = 'جاهز لاستقبال الطلبات - يتم تتبع موقعك.';
+            } else {
+                locationStatus.textContent = 'قم بتفعيل حالتك للبدء في استقبال الطلبات.';
+            }
+        }
+
+        function updateActiveOrderCard(order) {
+            if (!order) {
+                activeOrderCard.classList.add('hidden');
+                noOrderCard.classList.remove('hidden');
+                markPickedBtn.disabled = true;
+                markDeliveredBtn.disabled = true;
+                return;
+            }
+            activeOrderCard.classList.remove('hidden');
+            noOrderCard.classList.add('hidden');
+            orderStatusChip.textContent = order.status === 'DRIVER_ASSIGNED' ? 'في الطريق للاستلام' : order.status === 'PICKED_UP' ? 'في الطريق للتسليم' : order.status === 'DELIVERED' ? 'مكتمل' : order.status;
+            orderStatusChip.className = 'text-xs px-3 py-1 rounded-full ' + (order.status === 'DELIVERED' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600');
+            orderPickupEl.textContent = `(${order.pickup.lat.toFixed(4)}, ${order.pickup.lng.toFixed(4)})`;
+            orderDropoffEl.textContent = `(${order.dropoff.lat.toFixed(4)}, ${order.dropoff.lng.toFixed(4)})`;
+            orderCustomerEl.textContent = `${order.customer?.phoneNumber || '-'} ${order.customer?.name ? ' - ' + order.customer.name : ''}`;
+            orderPriceEl.textContent = order.price ? `${Number(order.price).toFixed(2)} ر.س` : '-';
+            markPickedBtn.disabled = order.status !== 'DRIVER_ASSIGNED';
+            markDeliveredBtn.disabled = order.status !== 'PICKED_UP';
+        }
+
+        function clearActiveOrder() {
+            activeOrder = null;
+            updateActiveOrderCard(null);
+        }
+
+        function startLocationTracking() {
+            if (!navigator.geolocation) {
+                locationStatus.textContent = 'الموقع غير مدعوم على جهازك.';
+                return;
+            }
+            if (locationWatchId !== null) return;
+            locationStatus.textContent = 'جارٍ تتبع موقعك...';
+            locationWatchId = navigator.geolocation.watchPosition((pos) => {
+                lastLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                locationStatus.textContent = `آخر تحديث: ${new Date().toLocaleTimeString()}`;
+                if (socket) {
+                    socket.emit('driver:send_location', lastLocation);
+                }
+            }, (err) => {
+                locationStatus.textContent = `تعذر تحديد موقعك: ${err.message}`;
+            }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+        }
+
+        function stopLocationTracking() {
+            if (locationWatchId !== null) {
+                navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
+            }
+            locationStatus.textContent = 'قم بتفعيل حالتك للبدء في استقبال الطلبات.';
+        }
+
+        async function fetchProfile() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/me`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!response.ok) {
+                    throw new Error('تعذر تحميل بيانات الحساب.');
+                }
+                const data = await response.json();
+                driverProfile = data;
+                driverNameHeader.textContent = data.user.name || 'سائق';
+                if (!data.driver) {
+                    showView('registration');
+                    updateAvailabilityUI('offline');
+                    stopLocationTracking();
+                } else if (!data.driver.verified) {
+                    showView('pending');
+                    updateAvailabilityUI('offline');
+                    stopLocationTracking();
+                } else {
+                    showView('dashboard');
+                    updateAvailabilityUI(data.driver.availabilityStatus || 'offline');
+                    if (data.driver.availabilityStatus === 'online' || data.driver.availabilityStatus === 'busy') {
+                        startLocationTracking();
+                    } else {
+                        stopLocationTracking();
+                    }
+                    await fetchActiveDriverOrder();
+                }
+            } catch (error) {
+                showToast(error.message || 'حدث خلل أثناء تحميل البيانات.');
+            }
+        }
+
+        async function fetchActiveDriverOrder() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/active-order`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data && data.id) {
+                    activeOrder = data;
+                    updateActiveOrderCard(data);
+                    if (socket) {
+                        socket.emit('order:join', { orderId: data.id });
+                    }
+                } else {
+                    clearActiveOrder();
+                }
+            } catch (error) {
+                console.error('Failed to fetch active order', error.message);
+            }
+        }
+
+        async function updateAvailability(status) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/status`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ status })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر تحديث الحالة.');
+                }
+                updateAvailabilityUI(status);
+                if (status === 'online') {
+                    startLocationTracking();
+                } else {
+                    stopLocationTracking();
+                }
+            } catch (error) {
+                showToast(error.message || 'تعذر تحديث الحالة.');
+                availabilityToggle.checked = !availabilityToggle.checked;
+            }
+        }
+
+        function setupSocket() {
+            if (socket) {
+                socket.disconnect();
+            }
+            socket = io(API_BASE_URL, { auth: { token: authToken } });
+            socket.on('connect_error', () => {
+                showToast('فقد الاتصال بالخادم.');
+            });
+            socket.on('order:assigned', (order) => {
+                if (!order) return;
+                activeOrder = order;
+                updateActiveOrderCard(order);
+                updateAvailabilityUI('busy');
+                startLocationTracking();
+            });
+            socket.on('order:status_update', (order) => {
+                if (!order || (activeOrder && order.id !== activeOrder.id)) return;
+                activeOrder = order;
+                updateActiveOrderCard(order);
+                if (order.status === 'DELIVERED') {
+                    showToast('تم إنهاء الطلب بنجاح!', false);
+                    fetchProfile();
+                    clearActiveOrder();
+                }
+            });
+        }
+
+        async function sendOtp() {
+            const phone = phoneInput.value.trim();
+            if (phone.length < 9) {
+                showToast('الرجاء إدخال رقم جوال صحيح.');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber: phone })
+                });
+                if (!response.ok) {
+                    throw new Error('تعذر إرسال رمز التحقق.');
+                }
+                userPhoneDisplay.textContent = phone;
+                phoneState.classList.add('hidden');
+                otpState.classList.remove('hidden');
+                otpInputs[0].focus();
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ غير متوقع.');
+            }
+        }
+
+        async function verifyOtp() {
+            const otpCode = otpInputs.map((input) => input.value.trim()).join('');
+            if (otpCode.length !== 4) {
+                showToast('الرجاء إدخال رمز مكون من 4 أرقام.');
+                return;
+            }
+            const phone = phoneInput.value.trim();
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber: phone, otpCode })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'فشل تسجيل الدخول.');
+                }
+                authToken = data.token;
+                authContainer.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+                setupSocket();
+                await fetchProfile();
+            } catch (error) {
+                showToast(error.message || 'فشل تسجيل الدخول.');
+            }
+        }
+
+        sendOtpBtn.addEventListener('click', sendOtp);
+        verifyOtpBtn.addEventListener('click', verifyOtp);
+        backToPhoneBtn.addEventListener('click', () => {
+            otpState.classList.add('hidden');
+            phoneState.classList.remove('hidden');
+            otpInputs.forEach((input) => input.value = '');
+        });
+
+        registrationForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        name: regName.value.trim(),
+                        vehicleType: regVehicle.value.trim(),
+                        licensePlate: regPlate.value.trim()
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر إرسال طلب التسجيل.');
+                }
+                showToast('تم استلام طلبك بنجاح، سيتم مراجعته قريباً.', false);
+                await fetchProfile();
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء التسجيل.');
+            }
+        });
+
+        refreshStatusBtn.addEventListener('click', fetchProfile);
+
+        availabilityToggle.addEventListener('change', (event) => {
+            const status = event.target.checked ? 'online' : 'offline';
+            updateAvailability(status);
+        });
+
+        markPickedBtn.addEventListener('click', () => {
+            if (!activeOrder) return;
+            socket.emit('driver:update_status', { orderId: activeOrder.id, status: 'PICKED_UP' });
+        });
+
+        markDeliveredBtn.addEventListener('click', () => {
+            if (!activeOrder) return;
+            socket.emit('driver:update_status', { orderId: activeOrder.id, status: 'DELIVERED' });
+        });
+
+        logoutBtn.addEventListener('click', () => {
+            authToken = null;
+            driverProfile = null;
+            activeOrder = null;
+            stopLocationTracking();
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            appContainer.classList.add('hidden');
+            authContainer.classList.remove('hidden');
+            phoneState.classList.remove('hidden');
+            otpState.classList.add('hidden');
+            otpInputs.forEach((input) => input.value = '');
+            phoneInput.value = '';
+        });
+
+        otpInputs.forEach((input, index) => {
+            input.addEventListener('input', () => {
+                if (input.value.length > 1) {
+                    input.value = input.value.slice(-1);
+                }
+                if (input.value && index < otpInputs.length - 1) {
+                    otpInputs[index + 1].focus();
+                }
+            });
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Backspace' && !input.value && index > 0) {
+                    otpInputs[index - 1].focus();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

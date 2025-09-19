@@ -3,476 +3,707 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>تطبيق توصيل وصلني</title>
-    
-    <!-- Tailwind CSS for styling -->
+    <title>وصلني - تطبيق العميل</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- LeafletJS for Maps -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
-    <!-- Phosphor Icons for a nice UI -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
-    
     <style>
-        /* Custom styles for a mobile-first experience */
         html, body {
+            font-family: 'Tajawal', 'Inter', sans-serif;
             overscroll-behavior-y: contain;
-            font-family: 'Inter', sans-serif; /* A modern font */
+            background-color: #f8fafc;
         }
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
         #map {
             height: 100vh;
             width: 100vw;
-            z-index: 10;
         }
-        .leaflet-pane { z-index: 10 !important; }
-        .leaflet-top, .leaflet-bottom { z-index: 20 !important; }
-        .leaflet-control-zoom { display: none; } /* Hide default zoom controls */
-        
         .bottom-sheet {
-            transition: transform 0.3s ease-in-out;
+            transition: transform 0.35s ease-in-out;
         }
-
-        .fade-in {
-            animation: fadeIn 0.5s ease-in-out;
+        .sheet-panel {
+            animation: fadeIn 0.35s ease;
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+            from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        input[type=number] { -moz-appearance: textfield; }
+        .otp-input::-webkit-outer-spin-button,
+        .otp-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .otp-input[type=number] {
+            -moz-appearance: textfield;
+        }
     </style>
+    <script>
+        let googleMapsResolve;
+        window.googleMapsReady = new Promise((resolve) => {
+            googleMapsResolve = resolve;
+        });
+        window.initWaslnyMaps = function () {
+            googleMapsResolve();
+        };
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initWaslnyMaps&libraries=geometry,places" async defer></script>
 </head>
-<body class="bg-gray-100 overflow-hidden">
-    
+<body class="overflow-hidden">
+    <div id="toast" class="fixed top-6 inset-x-0 flex justify-center pointer-events-none z-50 hidden">
+        <div class="bg-red-500 text-white px-4 py-2 rounded-full shadow-lg text-sm" id="toast-message"></div>
+    </div>
+
     <!-- Login Screen -->
-    <div id="auth-container" class="h-screen w-screen flex items-center justify-center bg-gray-100 p-4">
-        <div class="w-full max-w-sm mx-auto bg-white p-8 rounded-xl shadow-lg fade-in">
-            <!-- Phone Number State -->
-            <div id="phone-state">
-                <div class="text-center mb-6">
-                    <h1 class="text-3xl font-bold text-gray-800 flex items-center justify-center gap-2"><i class="ph ph-package text-blue-500"></i> وصلني</h1>
-                    <p class="text-gray-500 mt-2">أهلاً بك! أدخل رقم جوالك للمتابعة.</p>
+    <div id="auth-container" class="h-screen w-screen flex items-center justify-center bg-slate-100 p-4">
+        <div class="w-full max-w-sm bg-white rounded-2xl shadow-xl p-8 space-y-6">
+            <div class="text-center">
+                <div class="flex items-center justify-center gap-2 text-blue-600 mb-2">
+                    <i class="ph ph-package text-3xl"></i>
+                    <h1 class="text-3xl font-bold">وصلني</h1>
                 </div>
-                <div class="space-y-4">
-                    <input id="phone-input" type="tel" placeholder="05XXXXXXXX" class="w-full p-3 text-lg text-center border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-blue-500 transition">
-                    <button id="send-otp-btn" class="w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2">
-                        <span>إرسال الرمز</span>
-                    </button>
-                </div>
+                <p class="text-sm text-slate-500">خدمة التوصيل المحلية الفورية</p>
             </div>
-            <!-- OTP State -->
-            <div id="otp-state" class="hidden">
-                 <div class="text-center mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">التحقق من الرمز</h2>
-                    <p class="text-gray-500 mt-2">أدخل الرمز المكون من 4 أرقام الذي أرسلناه إلى <span id="user-phone-display" class="font-semibold text-gray-700"></span></p>
+
+            <div id="phone-state" class="space-y-4">
+                <label class="block text-slate-600 text-sm font-medium">رقم الجوال</label>
+                <input id="phone-input" type="tel" placeholder="05XXXXXXXX" class="w-full rounded-xl border border-slate-200 px-4 py-3 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                <button id="send-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">إرسال رمز التحقق</button>
+            </div>
+
+            <div id="otp-state" class="space-y-4 hidden">
+                <div class="text-center">
+                    <h2 class="text-xl font-semibold text-slate-800">أدخل رمز التحقق</h2>
+                    <p class="text-sm text-slate-500">تم إرسال الرمز إلى <span id="user-phone-display" class="font-bold"></span></p>
                 </div>
-                <div class="flex justify-center gap-2">
-                    <input type="number" class="w-16 h-16 text-center text-2xl font-bold border-2 rounded-lg focus:border-blue-500 focus:ring-blue-500 transition" maxlength="1">
-                    <input type="number" class="w-16 h-16 text-center text-2xl font-bold border-2 rounded-lg focus:border-blue-500 focus:ring-blue-500 transition" maxlength="1">
-                    <input type="number" class="w-16 h-16 text-center text-2xl font-bold border-2 rounded-lg focus:border-blue-500 focus:ring-blue-500 transition" maxlength="1">
-                    <input type="number" class="w-16 h-16 text-center text-2xl font-bold border-2 rounded-lg focus:border-blue-500 focus:ring-blue-500 transition" maxlength="1">
+                <div class="flex justify-center gap-3">
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                 <button id="verify-otp-btn" class="mt-6 w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors">
-                    تحقق
-                </button>
+                <button id="verify-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تأكيد الدخول</button>
+                <button id="back-to-phone-btn" class="w-full text-sm text-slate-500">تغيير رقم الجوال</button>
             </div>
         </div>
     </div>
 
     <!-- Main App Container -->
     <div id="app-container" class="hidden h-screen w-screen relative overflow-hidden">
-        <!-- Map View -->
-        <div id="map"></div>
-        
+        <div id="map" class="relative"></div>
+
         <!-- Center Marker -->
-        <div id="center-marker" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 transition-transform duration-300">
-            <div class="flex flex-col items-center">
-                 <span id="marker-label" class="px-3 py-1 bg-gray-800 text-white text-sm rounded-md shadow-lg mb-2 whitespace-nowrap">حدد نقطة الاستلام</span>
-                 <i id="marker-icon" class="ph-fill ph-map-pin text-5xl text-blue-500 drop-shadow-lg"></i>
+        <div id="center-marker" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full z-30 pointer-events-none transition">
+            <div class="flex flex-col items-center gap-2">
+                <span id="marker-label" class="bg-slate-900 text-white text-xs px-3 py-1 rounded-full shadow">حدد نقطة الاستلام</span>
+                <i class="ph-fill ph-map-pin text-5xl text-blue-600 drop-shadow"></i>
             </div>
         </div>
 
         <!-- Header Buttons -->
-        <div class="absolute top-5 right-5 z-20 flex flex-col gap-3">
-             <button id="logout-btn" title="تسجيل الخروج" class="bg-white w-12 h-12 rounded-full shadow-md flex items-center justify-center">
-                 <i class="ph ph-sign-out text-2xl text-gray-600"></i>
-             </button>
+        <div class="absolute top-5 left-5 z-40 flex flex-col gap-3">
+            <button id="logout-btn" title="تسجيل الخروج" class="w-12 h-12 rounded-full bg-white shadow flex items-center justify-center text-slate-500 hover:text-red-500 transition">
+                <i class="ph ph-sign-out text-2xl"></i>
+            </button>
         </div>
 
-
         <!-- Bottom Sheet -->
-        <div id="bottom-sheet" class="bottom-sheet absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl p-4 z-30 transform translate-y-full">
-            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-3"></div>
-            
-            <div id="sheet-content" class="max-h-[70vh] overflow-y-auto">
-                <!-- State: Create Order -->
-                <div id="state-create-order" class="space-y-4 fade-in">
-                    <div class="text-center">
-                        <h2 class="text-xl font-bold text-gray-800">إلى أين تريد التوصيل؟</h2>
-                        <p class="text-gray-500 text-sm">حدد نقطتي الاستلام والتسليم على الخريطة</p>
+        <div id="bottom-sheet" class="bottom-sheet absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl p-4 z-40 transform translate-y-full">
+            <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4"></div>
+            <div id="sheet-content" class="max-h-[70vh] overflow-y-auto space-y-5">
+                <div id="state-create-order" class="sheet-panel space-y-4">
+                    <div class="text-center space-y-1">
+                        <h2 class="text-xl font-semibold text-slate-800">إلى أين تود الإرسال اليوم؟</h2>
+                        <p class="text-sm text-slate-500">حرك الخريطة لتحديد نقطتي الاستلام والتسليم</p>
                     </div>
-                    <div>
-                        <div class="flex items-center gap-3 p-3 bg-gray-100 rounded-lg">
-                            <i class="ph-fill ph-circle text-blue-500 text-xl"></i>
-                            <span id="pickup-address" class="text-sm font-medium text-gray-700">لم يتم تحديد نقطة الاستلام</span>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-3 bg-slate-100 rounded-xl px-3 py-2">
+                            <i class="ph ph-dot-outline text-blue-600 text-xl"></i>
+                            <span id="pickup-address" class="text-sm text-slate-700">لم يتم تحديد نقطة الاستلام</span>
+                        </div>
+                        <div class="flex items-center gap-3 bg-slate-100 rounded-xl px-3 py-2">
+                            <i class="ph ph-map-pin text-emerald-500 text-xl"></i>
+                            <span id="dropoff-address" class="text-sm text-slate-700">لم يتم تحديد نقطة التسليم</span>
                         </div>
                     </div>
-                     <div>
-                        <div class="flex items-center gap-3 p-3 bg-gray-100 rounded-lg">
-                            <i class="ph-fill ph-map-pin text-green-500 text-xl"></i>
-                            <span id="dropoff-address" class="text-sm font-medium text-gray-700">لم يتم تحديد نقطة التسليم</span>
-                        </div>
-                    </div>
-                    <button id="confirm-locations-btn" disabled class="w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed">
-                        تأكيد المواقع
-                    </button>
-                </div>
-                
-                 <!-- State: Confirm Trip -->
-                <div id="state-confirm-trip" class="hidden space-y-4 fade-in">
-                     <div class="text-center">
-                        <h2 class="text-xl font-bold text-gray-800">تفاصيل الطلب</h2>
-                    </div>
-                     <div class="space-y-2 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                        <div class="flex justify-between items-center">
-                            <span class="text-gray-600">المسافة:</span>
-                            <span id="distance-text" class="font-bold text-gray-800"></span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-gray-600">السعر التقديري:</span>
-                            <span id="price-text" class="font-bold text-lg text-blue-600"></span>
-                        </div>
-                    </div>
-                    <button id="request-driver-btn" class="w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2">
-                        <i class="ph ph-paper-plane-tilt"></i>
-                        <span>اطلب الآن</span>
-                    </button>
-                     <button id="back-to-locations-btn" class="w-full text-center text-sm text-gray-500 py-2">تعديل المواقع</button>
+                    <button id="confirm-locations-btn" disabled class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl disabled:bg-slate-300 disabled:cursor-not-allowed">تأكيد الموقع الحالي</button>
                 </div>
 
-                <!-- State: Searching for Driver -->
-                <div id="state-searching" class="hidden text-center py-6 fade-in">
-                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-                    <h2 class="text-lg font-semibold text-gray-700 mt-4">جاري البحث عن أقرب مندوب...</h2>
-                    <p class="text-gray-500 text-sm mt-1">قد يستغرق هذا بضع ثوانٍ.</p>
-                    <button id="cancel-search-btn" class="mt-4 text-sm text-red-500 hover:text-red-700">إلغاء الطلب</button>
+                <div id="state-confirm-trip" class="sheet-panel hidden space-y-4">
+                    <div class="text-center space-y-1">
+                        <h2 class="text-xl font-semibold text-slate-800">تأكيد تفاصيل الرحلة</h2>
+                        <p class="text-sm text-slate-500">تحقق من التفاصيل قبل إرسال الطلب</p>
+                    </div>
+                    <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4 space-y-3">
+                        <div class="flex justify-between text-sm text-slate-600">
+                            <span>المسافة</span>
+                            <span id="distance-text" class="font-semibold text-slate-800"></span>
+                        </div>
+                        <div class="flex justify-between text-sm text-slate-600">
+                            <span>السعر التقديري</span>
+                            <span id="price-text" class="font-semibold text-blue-600"></span>
+                        </div>
+                    </div>
+                    <button id="request-driver-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl flex items-center justify-center gap-2"><i class="ph ph-paper-plane-tilt text-lg"></i><span>طلب مندوب</span></button>
+                    <button id="back-to-locations-btn" class="w-full text-center text-sm text-slate-500">تعديل المواقع</button>
                 </div>
 
-                <!-- State: Driver En Route -->
-                <div id="state-en-route" class="hidden space-y-4 fade-in">
-                    <div class="bg-gray-50 p-3 rounded-lg border flex items-center gap-3">
-                        <img src="https://placehold.co/48x48/E2E8F0/4A5568?text=👨‍✈️" class="rounded-full" alt="Driver">
+                <div id="state-searching" class="sheet-panel hidden text-center space-y-3 py-6">
+                    <div class="mx-auto w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+                    <h3 class="text-lg font-semibold text-slate-700">جاري البحث عن أقرب مندوب متاح...</h3>
+                    <p class="text-sm text-slate-500">عادةً ما يتم العثور على مندوب خلال لحظات قليلة.</p>
+                    <button id="cancel-search-btn" class="text-sm text-red-500 font-semibold">إلغاء الطلب</button>
+                </div>
+
+                <div id="state-en-route" class="sheet-panel hidden space-y-4">
+                    <div class="flex items-center gap-3 bg-slate-100 rounded-2xl p-3">
+                        <div class="w-14 h-14 rounded-full bg-white shadow flex items-center justify-center">
+                            <i class="ph ph-steering-wheel text-2xl text-blue-600"></i>
+                        </div>
                         <div>
-                            <p id="driver-name" class="font-bold text-gray-800">عبدالله محمد</p>
-                            <div class="flex items-center gap-1 text-yellow-500 text-xs">
-                                <i class="ph-fill ph-star"></i>
-                                <span id="driver-rating" class="font-semibold">4.9</span>
-                            </div>
+                            <p id="driver-name" class="text-lg font-semibold text-slate-800">-</p>
+                            <p id="driver-vehicle" class="text-sm text-slate-500">-</p>
+                            <p id="driver-contact" class="text-xs text-slate-400">رقم التواصل: <span id="driver-phone"></span></p>
                         </div>
-                        <div class="ms-auto flex gap-2">
-                            <button class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center"><i class="ph ph-phone text-xl"></i></button>
-                            <button class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center"><i class="ph ph-chat-circle-dots text-xl"></i></button>
+                        <div class="ms-auto">
+                            <span id="order-status" class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">في الطريق</span>
                         </div>
                     </div>
-                    <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                        <p id="order-status" class="font-bold text-blue-600">متجه إلى نقطة الاستلام</p>
-                        <p class="text-xs text-gray-500 mt-1">الوقت المتوقع للوصول: <span id="driver-eta"></span></p>
+                    <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center space-y-1">
+                        <p class="text-sm text-slate-600">الوقت المتوقع للوصول</p>
+                        <p id="driver-eta" class="text-lg font-semibold text-blue-600">-</p>
                     </div>
                 </div>
-                
-                 <!-- State: Delivered -->
-                <div id="state-delivered" class="hidden text-center py-6 fade-in">
-                     <i class="ph-fill ph-check-circle text-5xl text-green-500 mx-auto"></i>
-                    <h2 class="text-xl font-bold text-gray-800 mt-3">تم توصيل طلبك بنجاح!</h2>
-                    <p class="text-gray-600 mt-1 text-sm">شكراً لاستخدامك تطبيق وصلني.</p>
-                    <button id="new-order-btn" class="mt-4 w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors">
-                        إنشاء طلب جديد
-                    </button>
+
+                <div id="state-delivered" class="sheet-panel hidden text-center space-y-3 py-8">
+                    <i class="ph-fill ph-check-circle text-5xl text-emerald-500 mx-auto"></i>
+                    <h2 class="text-xl font-semibold text-slate-800">تم توصيل طلبك بنجاح!</h2>
+                    <p class="text-sm text-slate-500">نأمل أن تكون تجربتك مع وصلني مميزة.</p>
+                    <button id="new-order-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl">طلب جديد</button>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        // --- تهيئة عناصر الواجهة ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_BASE_URL = window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:3000';
         const authContainer = document.getElementById('auth-container');
         const appContainer = document.getElementById('app-container');
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+
         const phoneState = document.getElementById('phone-state');
         const otpState = document.getElementById('otp-state');
         const sendOtpBtn = document.getElementById('send-otp-btn');
+        const verifyOtpBtn = document.getElementById('verify-otp-btn');
+        const backToPhoneBtn = document.getElementById('back-to-phone-btn');
         const phoneInput = document.getElementById('phone-input');
         const userPhoneDisplay = document.getElementById('user-phone-display');
-        const verifyOtpBtn = document.getElementById('verify-otp-btn');
-        const otpInputs = document.querySelectorAll('#otp-state input');
-        const logoutBtn = document.getElementById('logout-btn');
+        const otpInputs = [...document.querySelectorAll('#otp-state .otp-input')];
 
+        const logoutBtn = document.getElementById('logout-btn');
         const bottomSheet = document.getElementById('bottom-sheet');
-        const sheetContent = document.getElementById('sheet-content');
         const centerMarker = document.getElementById('center-marker');
         const markerLabel = document.getElementById('marker-label');
-        const markerIcon = document.getElementById('marker-icon');
+        const confirmLocationsBtn = document.getElementById('confirm-locations-btn');
+        const requestDriverBtn = document.getElementById('request-driver-btn');
+        const cancelSearchBtn = document.getElementById('cancel-search-btn');
+        const newOrderBtn = document.getElementById('new-order-btn');
+        const backToLocationsBtn = document.getElementById('back-to-locations-btn');
 
         const pickupAddressEl = document.getElementById('pickup-address');
         const dropoffAddressEl = document.getElementById('dropoff-address');
-        const confirmLocationsBtn = document.getElementById('confirm-locations-btn');
-
         const distanceTextEl = document.getElementById('distance-text');
         const priceTextEl = document.getElementById('price-text');
-        const requestDriverBtn = document.getElementById('request-driver-btn');
-        
-        const statePanels = {
+
+        const driverNameEl = document.getElementById('driver-name');
+        const driverVehicleEl = document.getElementById('driver-vehicle');
+        const driverPhoneEl = document.getElementById('driver-phone');
+        const orderStatusEl = document.getElementById('order-status');
+        const driverEtaEl = document.getElementById('driver-eta');
+
+        const stateViews = {
             create: document.getElementById('state-create-order'),
             confirm: document.getElementById('state-confirm-trip'),
             searching: document.getElementById('state-searching'),
             enRoute: document.getElementById('state-en-route'),
-            delivered: document.getElementById('state-delivered'),
+            delivered: document.getElementById('state-delivered')
         };
 
-        const driverInfo = {
-            name: document.getElementById('driver-name'),
-            rating: document.getElementById('driver-rating'),
-            eta: document.getElementById('driver-eta'),
-            status: document.getElementById('order-status'),
-        };
-
-        // --- إدارة الحالة العامة للتطبيق ---
-        let appState = 'SETTING_PICKUP'; 
+        let authToken = null;
+        let socket = null;
+        let map = null;
+        let directionsService = null;
+        let directionsRenderer = null;
+        let geocoder = null;
+        let mapReady = false;
         let pickupCoords = null;
         let dropoffCoords = null;
+        let pickupMarker = null;
+        let dropoffMarker = null;
+        let driverMarker = null;
+        let quoteData = null;
+        let activeOrderId = null;
+        let activeOrderData = null;
+        let appState = 'SETTING_PICKUP';
 
-        // --- تهيئة الخريطة ---
-        let map;
-        function initMap() {
-            if(!map) { 
-                map = L.map('map').setView([30.0444, 31.2357], 13); // القاهرة
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-                    maxZoom: 20
-                }).addTo(map);
-                
-                // Animate bottom sheet in
-                setTimeout(() => {
-                    bottomSheet.style.transform = 'translateY(0)';
-                }, 100);
+        function showToast(message, isError = true) {
+            toastMessage.textContent = message;
+            toast.classList.remove('hidden');
+            toastMessage.className = `px-4 py-2 rounded-full shadow-lg text-sm ${isError ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => toast.classList.add('opacity-0'), 50);
+            setTimeout(() => toast.classList.add('hidden'), 3200);
+        }
 
-                 map.on('movestart', () => centerMarker.style.transform = 'translate(-50%, -50%) scale(0.9)');
-                 map.on('moveend', () => centerMarker.style.transform = 'translate(-50%, -50%) scale(1.0)');
+        function switchSheetState(key) {
+            Object.values(stateViews).forEach((panel) => panel.classList.add('hidden'));
+            if (stateViews[key]) {
+                stateViews[key].classList.remove('hidden');
             }
         }
-        
-        let pickupMarker, dropoffMarker, driverMarker, routePolyline;
-        let simulationInterval;
 
-        // --- وظائف إدارة الواجهة ---
-        function showSheetState(visibleState) {
-            Object.values(statePanels).forEach(panel => panel.classList.add('hidden'));
-            if (statePanels[visibleState]) {
-                statePanels[visibleState].classList.remove('hidden');
+        async function initMap() {
+            if (mapReady) return;
+            await window.googleMapsReady;
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 24.7136, lng: 46.6753 },
+                zoom: 14,
+                disableDefaultUI: true,
+                gestureHandling: 'greedy'
+            });
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                suppressMarkers: true,
+                polylineOptions: { strokeColor: '#2563eb', strokeWeight: 6 }
+            });
+            directionsRenderer.setMap(map);
+            geocoder = new google.maps.Geocoder();
+            mapReady = true;
+
+            map.addListener('dragstart', () => {
+                confirmLocationsBtn.disabled = false;
+                centerMarker.classList.add('-translate-y-[55%]');
+            });
+            map.addListener('dragend', () => {
+                centerMarker.classList.remove('-translate-y-[55%]');
+            });
+
+            setTimeout(() => {
+                bottomSheet.classList.remove('translate-y-full');
+            }, 200);
+        }
+
+        function resetMapArtifacts() {
+            if (pickupMarker) {
+                pickupMarker.setMap(null);
+                pickupMarker = null;
+            }
+            if (dropoffMarker) {
+                dropoffMarker.setMap(null);
+                dropoffMarker = null;
+            }
+            if (driverMarker) {
+                driverMarker.setMap(null);
+                driverMarker = null;
+            }
+            if (directionsRenderer) {
+                directionsRenderer.set('directions', null);
             }
         }
-        
-        function resetApp() {
+
+        function resetFlow(clearOrder = true) {
             appState = 'SETTING_PICKUP';
             pickupCoords = null;
             dropoffCoords = null;
-
+            quoteData = null;
             pickupAddressEl.textContent = 'لم يتم تحديد نقطة الاستلام';
             dropoffAddressEl.textContent = 'لم يتم تحديد نقطة التسليم';
-            
             confirmLocationsBtn.disabled = true;
-
             markerLabel.textContent = 'حدد نقطة الاستلام';
-            markerIcon.className = 'ph-fill ph-map-pin text-5xl text-blue-500 drop-shadow-lg';
             centerMarker.classList.remove('hidden');
-
-            if (pickupMarker) map.removeLayer(pickupMarker);
-            if (dropoffMarker) map.removeLayer(dropoffMarker);
-            if (driverMarker) map.removeLayer(driverMarker);
-            if (routePolyline) map.removeLayer(routePolyline);
-            pickupMarker = dropoffMarker = driverMarker = routePolyline = null;
-            
-            clearInterval(simulationInterval);
-            showSheetState('create');
-            map.setView([30.0444, 31.2357], 13, { animate: true });
-        }
-
-        // --- منطق التسعير (محاكاة) ---
-        function calculateQuote() {
-            if (!pickupCoords || !dropoffCoords) return;
-            const distance = pickupCoords.distanceTo(dropoffCoords) / 1000;
-            const baseFare = 20;
-            const perKmRate = 4;
-            const price = baseFare + (distance * perKmRate);
-
-            distanceTextEl.textContent = `${distance.toFixed(1)} كم`;
-            priceTextEl.textContent = `${price.toFixed(2)} جنيه`;
-            
-            // Draw a simple line for the route
-            const latlngs = [pickupCoords, dropoffCoords];
-            routePolyline = L.polyline(latlngs, {color: '#3b82f6', weight: 5}).addTo(map);
-            map.fitBounds(routePolyline.getBounds().pad(0.2));
-        }
-        
-        // --- محاكاة منطق الواجهة الخلفية ---
-        function simulateFindDriver() {
-            showSheetState('searching');
-            setTimeout(() => {
-                if (Math.random() > 0.95) { 
-                     alert('عذراً، لا يوجد مناديب متاحون حالياً.'); resetApp(); return;
-                }
-                appState = 'EN_ROUTE_TO_PICKUP';
-                showSheetState('enRoute');
-                
-                const randomLatOffset = (Math.random() - 0.5) * 0.05;
-                const randomLngOffset = (Math.random() - 0.5) * 0.05;
-                const driverStartPos = L.latLng(pickupCoords.lat + randomLatOffset, pickupCoords.lng + randomLngOffset);
-                
-                 const driverIconInstance = L.icon({
-                    iconUrl: 'https://img.icons8.com/plasticine/100/000000/car--v1.png',
-                    iconSize: [40, 40],
-                });
-                if (driverMarker) map.removeLayer(driverMarker);
-                driverMarker = L.marker(driverStartPos, { icon: driverIconInstance }).addTo(map);
-                
-                map.fitBounds(L.latLngBounds(driverStartPos, pickupCoords).pad(0.2));
-                
-                simulateDriverMovement();
-            }, 3000);
-        }
-
-        function simulateDriverMovement() {
-            let progress = 0;
-            let target = pickupCoords;
-            let startPos = driverMarker.getLatLng();
-            
-            simulationInterval = setInterval(() => {
-                progress += 0.05;
-                if (progress > 1) progress = 1;
-
-                const newLat = startPos.lat + (target.lat - startPos.lat) * progress;
-                const newLng = startPos.lng + (target.lng - startPos.lng) * progress;
-                driverMarker.setLatLng([newLat, newLng]);
-
-                const eta = (target.distanceTo(driverMarker.getLatLng()) / 1000) / 40 * 60;
-                driverInfo.eta.textContent = `${Math.ceil(eta)} دقيقة`;
-                
-                if (progress >= 1) {
-                    if (appState === 'EN_ROUTE_TO_PICKUP') {
-                        appState = 'EN_ROUTE_TO_DROPOFF';
-                        driverInfo.status.textContent = 'تم استلام الشحنة، في الطريق للتسليم';
-                        target = dropoffCoords;
-                        startPos = pickupCoords;
-                        progress = 0;
-                        map.fitBounds(L.latLngBounds(pickupCoords, dropoffCoords).pad(0.2));
-                    } else if (appState === 'EN_ROUTE_TO_DROPOFF') {
-                        appState = 'DELIVERED';
-                        clearInterval(simulationInterval);
-                        showSheetState('delivered');
-                    }
-                }
-            }, 1000);
-        }
-
-        // --- معالجة الأحداث ---
-        confirmLocationsBtn.addEventListener('click', () => {
-             if (appState === 'SETTING_PICKUP') {
-                pickupCoords = map.getCenter();
-                pickupAddressEl.textContent = `Lat: ${pickupCoords.lat.toFixed(4)}, Lng: ${pickupCoords.lng.toFixed(4)}`;
-                
-                pickupMarker = L.marker(pickupCoords, {
-                     icon: L.divIcon({
-                        className: 'custom-div-icon',
-                        html: `<i class="ph-fill ph-circle text-blue-500 text-2xl"></i>`,
-                        iconSize: [30, 42],
-                        iconAnchor: [15, 42]
-                    })
-                }).addTo(map);
-                
-                appState = 'SETTING_DROPOFF';
-                markerLabel.textContent = 'حدد نقطة التسليم';
-                markerIcon.className = 'ph-fill ph-map-pin text-5xl text-green-500 drop-shadow-lg';
-
-            } else if (appState === 'SETTING_DROPOFF') {
-                dropoffCoords = map.getCenter();
-                dropoffAddressEl.textContent = `Lat: ${dropoffCoords.lat.toFixed(4)}, Lng: ${dropoffCoords.lng.toFixed(4)}`;
-                
-                 dropoffMarker = L.marker(dropoffCoords, {
-                     icon: L.divIcon({
-                        className: 'custom-div-icon',
-                        html: `<i class="ph-fill ph-map-pin text-green-500 text-2xl"></i>`,
-                        iconSize: [30, 42],
-                        iconAnchor: [15, 42]
-                    })
-                }).addTo(map);
-
-                appState = 'CONFIRMING';
-                centerMarker.classList.add('hidden'); // Hide center marker
-                showSheetState('confirm');
-                calculateQuote();
+            resetMapArtifacts();
+            switchSheetState('create');
+            if (mapReady) {
+                map.panTo({ lat: 24.7136, lng: 46.6753 });
+                map.setZoom(14);
             }
-        });
+            if (clearOrder) {
+                activeOrderId = null;
+                activeOrderData = null;
+            }
+        }
 
-        map.on('move', () => {
-             if (appState === 'SETTING_PICKUP' || appState === 'SETTING_DROPOFF') {
-                 confirmLocationsBtn.disabled = false;
-             }
-        });
+        function placeMarker(type, position) {
+            const iconBase = type === 'pickup'
+                ? 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png'
+                : 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png';
+            const marker = new google.maps.Marker({
+                position,
+                map,
+                icon: iconBase
+            });
+            return marker;
+        }
 
-        document.getElementById('back-to-locations-btn').addEventListener('click', () => {
-             if (routePolyline) map.removeLayer(routePolyline);
-             if (pickupMarker) map.removeLayer(pickupMarker);
-             if (dropoffMarker) map.removeLayer(dropoffMarker);
-             resetApp();
-        });
+        function updateDriverMarker(position) {
+            if (!mapReady) return;
+            if (!driverMarker) {
+                driverMarker = new google.maps.Marker({
+                    position,
+                    map,
+                    icon: {
+                        url: 'https://maps.gstatic.com/mapfiles/ms2/micons/cabs.png',
+                        scaledSize: new google.maps.Size(42, 42)
+                    }
+                });
+            } else {
+                driverMarker.setPosition(position);
+            }
+        }
 
-        requestDriverBtn.addEventListener('click', simulateFindDriver);
-        document.getElementById('cancel-search-btn').addEventListener('click', resetApp);
-        document.getElementById('new-order-btn').addEventListener('click', resetApp);
+        function computeEtaMetersToMinutes(position, target) {
+            if (!position || !target || !google.maps.geometry) return '-';
+            const distanceMeters = google.maps.geometry.spherical.computeDistanceBetween(
+                new google.maps.LatLng(position.lat, position.lng),
+                new google.maps.LatLng(target.lat, target.lng)
+            );
+            const minutes = Math.ceil((distanceMeters / 1000) / 40 * 60);
+            return `${minutes} دقيقة`;
+        }
 
-        // --- منطق تسجيل الدخول ---
-        sendOtpBtn.addEventListener('click', () => {
-            const phone = phoneInput.value;
-            if (phone.length >= 10) { 
+        async function geocodeLatLng(latLng, targetEl) {
+            if (!geocoder) return;
+            try {
+                const { results } = await geocoder.geocode({ location: latLng });
+                if (results && results.length) {
+                    targetEl.textContent = results[0].formatted_address;
+                } else {
+                    targetEl.textContent = `(${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)})`;
+                }
+            } catch (err) {
+                targetEl.textContent = `(${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)})`;
+            }
+        }
+
+        async function requestQuote() {
+            if (!pickupCoords || !dropoffCoords) return;
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/quote`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() },
+                        dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('تعذر الحصول على التسعيرة. حاول مرة أخرى.');
+                }
+                const data = await response.json();
+                quoteData = data;
+                distanceTextEl.textContent = `${Number(data.distanceKm).toFixed(2)} كم`;
+                priceTextEl.textContent = `${Number(data.price).toFixed(2)} ر.س`;
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء حساب التسعيرة.');
+            }
+        }
+
+        function renderRoute() {
+            if (!pickupCoords || !dropoffCoords) return;
+            directionsService.route({
+                origin: pickupCoords,
+                destination: dropoffCoords,
+                travelMode: google.maps.TravelMode.DRIVING
+            }).then((result) => {
+                directionsRenderer.setDirections(result);
+                const bounds = new google.maps.LatLngBounds();
+                bounds.extend(pickupCoords);
+                bounds.extend(dropoffCoords);
+                map.fitBounds(bounds, 120);
+            }).catch(() => {
+                showToast('تعذر رسم المسار على الخريطة.');
+            });
+        }
+
+        async function sendOtp() {
+            const phone = phoneInput.value.trim();
+            if (phone.length < 9) {
+                showToast('الرجاء إدخال رقم جوال صحيح.');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber: phone })
+                });
+                if (!response.ok) {
+                    throw new Error('تعذر إرسال رمز التحقق.');
+                }
                 userPhoneDisplay.textContent = phone;
                 phoneState.classList.add('hidden');
                 otpState.classList.remove('hidden');
                 otpInputs[0].focus();
-            } else {
-                alert('الرجاء إدخال رقم جوال صحيح.');
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ غير متوقع.');
+            }
+        }
+
+        async function verifyOtp() {
+            const otpCode = otpInputs.map((input) => input.value.trim()).join('');
+            if (otpCode.length !== 4) {
+                showToast('الرجاء إدخال رمز مكون من 4 أرقام.');
+                return;
+            }
+            const phone = phoneInput.value.trim();
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber: phone, otpCode })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'فشل تسجيل الدخول.');
+                }
+                authToken = data.token;
+                await initMap();
+                authContainer.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+                resetFlow();
+                setupSocket();
+                await fetchActiveOrder();
+            } catch (error) {
+                showToast(error.message || 'فشل تسجيل الدخول.');
+            }
+        }
+
+        function setupSocket() {
+            if (socket) {
+                socket.disconnect();
+            }
+            socket = io(API_BASE_URL, { auth: { token: authToken } });
+            socket.on('connect_error', (err) => {
+                console.error('Socket error', err.message);
+                showToast('فقد الاتصال بالخادم. جارٍ إعادة المحاولة...');
+            });
+            socket.on('order:status_update', (order) => {
+                if (!order || (activeOrderId && order.id !== activeOrderId)) return;
+                activeOrderId = order.id;
+                activeOrderData = order;
+                handleOrderUpdate(order);
+            });
+            socket.on('driver:location_update', (payload) => {
+                if (!payload || payload.orderId !== activeOrderId) return;
+                updateDriverMarker({ lat: payload.lat, lng: payload.lng });
+                if (activeOrderData && activeOrderData.status === 'DRIVER_ASSIGNED') {
+                    driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.pickup);
+                } else if (activeOrderData && activeOrderData.status === 'PICKED_UP') {
+                    driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.dropoff);
+                }
+            });
+        }
+
+        async function fetchActiveOrder() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders/active`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data && data.id) {
+                    activeOrderId = data.id;
+                    activeOrderData = data;
+                    if (socket) {
+                        socket.emit('order:join', { orderId: data.id });
+                    }
+                    hydrateOrderOnMap(data);
+                    handleOrderUpdate(data);
+                } else {
+                    resetFlow(true);
+                }
+            } catch (error) {
+                console.error('Failed to fetch active order', error.message);
+            }
+        }
+
+        function hydrateOrderOnMap(order) {
+            pickupCoords = new google.maps.LatLng(order.pickup.lat, order.pickup.lng);
+            dropoffCoords = new google.maps.LatLng(order.dropoff.lat, order.dropoff.lng);
+            resetMapArtifacts();
+            pickupMarker = placeMarker('pickup', pickupCoords);
+            dropoffMarker = placeMarker('dropoff', dropoffCoords);
+            geocodeLatLng(order.pickup, pickupAddressEl);
+            geocodeLatLng(order.dropoff, dropoffAddressEl);
+            renderRoute();
+            centerMarker.classList.add('hidden');
+        }
+
+        function handleOrderUpdate(order) {
+            if (!order) return;
+            if (!pickupCoords || !dropoffCoords) {
+                hydrateOrderOnMap(order);
+            }
+            switch (order.status) {
+                case 'SEARCHING_DRIVER':
+                    switchSheetState('searching');
+                    orderStatusEl.textContent = 'جاري البحث عن مندوب...';
+                    break;
+                case 'DRIVER_ASSIGNED':
+                    updateDriverInfo(order.driver);
+                    orderStatusEl.textContent = 'المندوب في الطريق لنقطة الاستلام';
+                    driverEtaEl.textContent = '-';
+                    switchSheetState('enRoute');
+                    break;
+                case 'PICKED_UP':
+                    updateDriverInfo(order.driver);
+                    orderStatusEl.textContent = 'تم الاستلام - في الطريق للتسليم';
+                    switchSheetState('enRoute');
+                    break;
+                case 'DELIVERED':
+                    updateDriverInfo(order.driver);
+                    switchSheetState('delivered');
+                    break;
+                case 'CANCELLED':
+                    showToast('تم إلغاء الطلب.', false);
+                    resetFlow(true);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        function updateDriverInfo(driver) {
+            if (!driver) return;
+            driverNameEl.textContent = driver.name || 'مندوب مجهول';
+            driverVehicleEl.textContent = driver.vehicleType ? `${driver.vehicleType} - ${driver.licensePlate || ''}` : '-';
+            driverPhoneEl.textContent = driver.phoneNumber || '-';
+        }
+
+        async function createOrder() {
+            if (!pickupCoords || !dropoffCoords) {
+                showToast('الرجاء تحديد نقاط الاستلام والتسليم.');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() },
+                        dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر إنشاء الطلب.');
+                }
+                activeOrderId = data.id;
+                activeOrderData = { ...data, pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() }, dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() } };
+                if (socket) {
+                    socket.emit('order:join', { orderId: activeOrderId });
+                }
+                switchSheetState('searching');
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
+            }
+        }
+
+        async function cancelOrder() {
+            if (!activeOrderId) {
+                resetFlow(true);
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders/${activeOrderId}/cancel`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${authToken}`
+                    }
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'تعذر إلغاء الطلب.');
+                }
+                showToast('تم إلغاء الطلب.', false);
+                resetFlow(true);
+            } catch (error) {
+                showToast(error.message || 'تعذر إلغاء الطلب.');
+            }
+        }
+
+        sendOtpBtn.addEventListener('click', sendOtp);
+        verifyOtpBtn.addEventListener('click', verifyOtp);
+        backToPhoneBtn.addEventListener('click', () => {
+            otpState.classList.add('hidden');
+            phoneState.classList.remove('hidden');
+            otpInputs.forEach((input) => input.value = '');
+        });
+
+        confirmLocationsBtn.addEventListener('click', async () => {
+            if (!mapReady) return;
+            if (appState === 'SETTING_PICKUP') {
+                pickupCoords = map.getCenter();
+                pickupMarker = placeMarker('pickup', pickupCoords);
+                await geocodeLatLng({ lat: pickupCoords.lat(), lng: pickupCoords.lng() }, pickupAddressEl);
+                appState = 'SETTING_DROPOFF';
+                markerLabel.textContent = 'حدد نقطة التسليم';
+                confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
+                confirmLocationsBtn.disabled = true;
+            } else if (appState === 'SETTING_DROPOFF') {
+                dropoffCoords = map.getCenter();
+                dropoffMarker = placeMarker('dropoff', dropoffCoords);
+                await geocodeLatLng({ lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }, dropoffAddressEl);
+                centerMarker.classList.add('hidden');
+                appState = 'CONFIRMING';
+                renderRoute();
+                await requestQuote();
+                switchSheetState('confirm');
             }
         });
-        
-        verifyOtpBtn.addEventListener('click', () => {
-            authContainer.classList.add('hidden');
-            appContainer.classList.remove('hidden');
-            initMap();
-            resetApp();
+
+        requestDriverBtn.addEventListener('click', createOrder);
+        cancelSearchBtn.addEventListener('click', cancelOrder);
+        newOrderBtn.addEventListener('click', () => resetFlow(true));
+        backToLocationsBtn.addEventListener('click', () => {
+            resetFlow(false);
         });
 
         logoutBtn.addEventListener('click', () => {
+            authToken = null;
+            activeOrderId = null;
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            resetFlow(true);
             appContainer.classList.add('hidden');
             authContainer.classList.remove('hidden');
             phoneState.classList.remove('hidden');
             otpState.classList.add('hidden');
+            otpInputs.forEach((input) => input.value = '');
             phoneInput.value = '';
-            bottomSheet.style.transform = 'translateY(100%)';
         });
-        
+
         otpInputs.forEach((input, index) => {
             input.addEventListener('input', () => {
-                if (input.value.length === 1 && index < otpInputs.length - 1) {
+                if (input.value.length > 1) {
+                    input.value = input.value.slice(-1);
+                }
+                if (input.value && index < otpInputs.length - 1) {
                     otpInputs[index + 1].focus();
                 }
             });
-             input.addEventListener('keydown', (e) => {
-                if (e.key === "Backspace" && !input.value && index > 0) {
-                    otpInputs[index-1].focus();
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Backspace' && !input.value && index > 0) {
+                    otpInputs[index - 1].focus();
                 }
             });
         });
@@ -480,4 +711,3 @@
     </script>
 </body>
 </html>
-

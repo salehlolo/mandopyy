@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>وصلني - لوحة التحكم</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        html, body {
+            font-family: 'Tajawal', 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="toast" class="fixed top-6 inset-x-0 flex justify-center z-50 pointer-events-none hidden">
+        <div id="toast-message" class="px-4 py-2 rounded-full text-sm text-white shadow-lg"></div>
+    </div>
+
+    <div id="login-view" class="min-h-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">
+            <div class="text-center space-y-2">
+                <div class="flex items-center justify-center gap-2 text-blue-600">
+                    <i class="ph ph-shield-star text-3xl"></i>
+                    <h1 class="text-2xl font-bold">لوحة إدارة وصلني</h1>
+                </div>
+                <p class="text-sm text-slate-500">أدخل كلمة المرور الإدارية للمتابعة</p>
+            </div>
+            <div class="space-y-4">
+                <input id="admin-password" type="password" placeholder="********" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button id="admin-login-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تسجيل الدخول</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="admin-app" class="hidden min-h-screen">
+        <header class="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
+            <div>
+                <h2 class="text-xl font-semibold text-slate-800">إدارة المناديب</h2>
+                <p class="text-sm text-slate-500">راجع الطلبات وقم بتفعيل السائقين المعتمدين</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="refresh-btn" class="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700">
+                    <i class="ph ph-arrows-clockwise"></i>
+                    <span>تحديث القائمة</span>
+                </button>
+                <button id="admin-logout-btn" class="inline-flex items-center gap-2 text-sm text-red-500 hover:text-red-600">
+                    <i class="ph ph-sign-out"></i>
+                    <span>خروج</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="max-w-5xl mx-auto px-4 py-6">
+            <div class="bg-white rounded-3xl shadow overflow-hidden">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                        <tr>
+                            <th class="px-4 py-3 text-right">الاسم</th>
+                            <th class="px-4 py-3 text-right">رقم الجوال</th>
+                            <th class="px-4 py-3 text-right">نوع المركبة</th>
+                            <th class="px-4 py-3 text-right">رقم اللوحة</th>
+                            <th class="px-4 py-3 text-right">الحالة</th>
+                            <th class="px-4 py-3 text-right">إجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody id="drivers-body" class="divide-y divide-slate-100 text-sm text-slate-700"></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_BASE_URL = window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:3000';
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+        const loginView = document.getElementById('login-view');
+        const adminApp = document.getElementById('admin-app');
+        const passwordInput = document.getElementById('admin-password');
+        const loginBtn = document.getElementById('admin-login-btn');
+        const logoutBtn = document.getElementById('admin-logout-btn');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const driversBody = document.getElementById('drivers-body');
+
+        let adminToken = null;
+
+        function showToast(message, isError = true) {
+            toastMessage.textContent = message;
+            toastMessage.className = `px-4 py-2 rounded-full text-sm shadow-lg ${isError ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('opacity-0'), 50);
+            setTimeout(() => {
+                toast.classList.add('hidden');
+                toast.classList.remove('opacity-0');
+            }, 3200);
+        }
+
+        function renderDrivers(drivers) {
+            driversBody.innerHTML = '';
+            if (!drivers.length) {
+                driversBody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">لا توجد طلبات تسجيل حالياً.</td></tr>`;
+                return;
+            }
+            drivers.forEach((driver) => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-slate-50';
+                const statusBadge = driver.verified
+                    ? '<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-check-circle"></i>مفعل</span>'
+                    : '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-clock"></i>بانتظار التفعيل</span>';
+                row.innerHTML = `
+                    <td class="px-4 py-4">${driver.name || '-'}</td>
+                    <td class="px-4 py-4">${driver.phoneNumber || '-'}</td>
+                    <td class="px-4 py-4">${driver.vehicleType || '-'}</td>
+                    <td class="px-4 py-4">${driver.licensePlate || '-'}</td>
+                    <td class="px-4 py-4">${statusBadge}</td>
+                    <td class="px-4 py-4">
+                        ${driver.verified ? '<span class="text-xs text-slate-400">لا توجد إجراءات</span>' : `<button data-id="${driver.id}" class="verify-btn bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-full">اعتماد</button>`}
+                    </td>
+                `;
+                driversBody.appendChild(row);
+            });
+        }
+
+        async function loadDrivers() {
+            if (!adminToken) return;
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/admin/drivers`, {
+                    headers: { Authorization: `Bearer ${adminToken}` }
+                });
+                if (!response.ok) {
+                    throw new Error('تعذر تحميل قائمة المناديب.');
+                }
+                const data = await response.json();
+                renderDrivers(data);
+            } catch (error) {
+                showToast(error.message || 'حدث خلل أثناء تحميل البيانات.');
+            }
+        }
+
+        async function login() {
+            const password = passwordInput.value.trim();
+            if (!password) {
+                showToast('الرجاء إدخال كلمة المرور.');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'كلمة مرور غير صحيحة.');
+                }
+                adminToken = data.token;
+                loginView.classList.add('hidden');
+                adminApp.classList.remove('hidden');
+                passwordInput.value = '';
+                await loadDrivers();
+                showToast('تم تسجيل الدخول بنجاح.', false);
+            } catch (error) {
+                showToast(error.message || 'فشل تسجيل الدخول.');
+            }
+        }
+
+        async function verifyDriver(driverId) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${driverId}/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${adminToken}`
+                    },
+                    body: JSON.stringify({ verified: true })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر اعتماد السائق.');
+                }
+                showToast('تم اعتماد السائق بنجاح.', false);
+                await loadDrivers();
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء الاعتماد.');
+            }
+        }
+
+        loginBtn.addEventListener('click', login);
+        passwordInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                login();
+            }
+        });
+        logoutBtn.addEventListener('click', () => {
+            adminToken = null;
+            adminApp.classList.add('hidden');
+            loginView.classList.remove('hidden');
+        });
+        refreshBtn.addEventListener('click', loadDrivers);
+
+        driversBody.addEventListener('click', (event) => {
+            const btn = event.target.closest('.verify-btn');
+            if (!btn) return;
+            const driverId = btn.getAttribute('data-id');
+            verifyDriver(driverId);
+        });
+    });
+    </script>
+</body>
+</html>
