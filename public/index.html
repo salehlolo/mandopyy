@@ -43,7 +43,6 @@
       <button class="linkbtn" id="adminBtn">لوحة المشرف</button>
     </div>
 
-    <div class="footer">تريد الواجهة القديمة؟ افتح صفحة <a href="/delivery_app.html">العميل</a> مباشرة.</div>
   </div>
 
   <script>
@@ -58,17 +57,37 @@
     document.getElementById('driverBtn').onclick = () => location.href = '/driver_app.html';
     document.getElementById('adminBtn').onclick  = () => location.href = '/admin_panel.html';
 
+    async function requestOtp(phone){
+      if (!API_BASE_URL) throw new Error('إعداد الخادم غير مكتمل.');
+      const r = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ phone })
+      });
+      const data = await r.json();
+      if(!r.ok) throw new Error(data?.message || 'فشل إرسال الكود');
+      return data;
+    }
+
+    async function verifyOtp(phone, code){
+      if (!API_BASE_URL) throw new Error('إعداد الخادم غير مكتمل.');
+      const r = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ phone, code, role:'customer' })
+      });
+      const data = await r.json();
+      if(!r.ok) throw new Error(data?.message || 'فشل التحقق');
+      if(data.token){
+        localStorage.setItem('authToken', data.token);
+      }
+      location.href = '/delivery_app.html';
+    }
+
     sendBtn.onclick = async () => {
       const phone = (phoneEl.value || '').trim();
       if (!phone) return alert('أدخل رقم الجوال');
       sendBtn.disabled = true;
       try {
-        const r = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ phone })
-        });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data?.message || 'فشل إرسال الكود');
+        const data = await requestOtp(phone);
         otpArea.style.display = 'block';
         verifyBtn.style.display = 'inline-block';
         alert(data.mock ? 'وضع التطوير: تم توليد OTP في الخادم (راجع الـconsole)' : 'تم إرسال الكود');
@@ -85,14 +104,7 @@
       if (!code) return alert('أدخل كود التحقق');
       verifyBtn.disabled = true;
       try {
-        const r = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ phone, code, role: 'customer' })
-        });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data?.message || 'فشل التحقق');
-        // بعد الدخول كـ عميل نوجّهه لواجهة العميل الحالية
-        location.href = '/delivery_app.html';
+        await verifyOtp(phone, code);
       } catch(e){
         alert(e.message);
       } finally {

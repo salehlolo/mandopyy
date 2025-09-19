@@ -66,12 +66,17 @@ const app = express();
 app.use(helmet());
 app.use(express.json());
 
-const allowList = CONFIG.corsOrigins;
+// Resolve allowed origins for CORS. If the developer did not provide
+// `CORS_ORIGINS`, we default to local addresses only to avoid exposing the
+// API publicly by accident.
+const defaultCorsOrigins = [`http://localhost:${CONFIG.port}`, `http://127.0.0.1:${CONFIG.port}`];
+const allowList = CONFIG.corsOrigins.length ? CONFIG.corsOrigins : defaultCorsOrigins;
+const uniqueAllowList = [...new Set(allowList)];
 const allowOrigin = (origin, callback) => {
   if (!origin) {
     return callback(null, true);
   }
-  if (!allowList.length || allowList.includes(origin)) {
+  if (!uniqueAllowList.length || uniqueAllowList.includes(origin)) {
     return callback(null, true);
   }
   return callback(new Error('Not allowed by CORS'));
@@ -1045,7 +1050,9 @@ async function bootstrap() {
     await initDatabase();
     server.listen(CONFIG.port, () => {
       console.log(`Server listening on port ${CONFIG.port}`);
-      console.log(`Allowed CORS origins: ${allowList.length ? allowList.join(', ') : 'none'}`);
+      console.log(
+        `Allowed CORS origins: ${uniqueAllowList.length ? uniqueAllowList.join(', ') : 'none'}`
+      );
     });
   } catch (error) {
     console.error('Failed to start server', error);

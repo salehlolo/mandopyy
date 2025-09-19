@@ -7,6 +7,35 @@
     <script src="/config.js"></script>
     <script>
         const { API_BASE_URL, GOOGLE_MAPS_API_KEY } = window.__APP_CONFIG__ || {};
+        let __CUSTOMER_AUTH_TOKEN__ = localStorage.getItem('authToken');
+        if (!__CUSTOMER_AUTH_TOKEN__) {
+            window.location.replace('/');
+        }
+        let googleMapsResolve;
+        let googleMapsReject;
+        window.googleMapsReady = new Promise((resolve, reject) => {
+            googleMapsResolve = resolve;
+            googleMapsReject = reject;
+        });
+        (function loadGoogleMapsOnce() {
+            if (!GOOGLE_MAPS_API_KEY) {
+                console.warn('GOOGLE_MAPS_API_KEY is missing.');
+                googleMapsResolve?.();
+                return;
+            }
+            if (document.getElementById('google-maps-sdk')) {
+                return;
+            }
+            const script = document.createElement('script');
+            script.id = 'google-maps-sdk';
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&libraries=places,geometry`;
+            script.async = true;
+            script.defer = true;
+            script.onload = () => googleMapsResolve?.();
+            script.onerror = () => googleMapsReject?.(new Error('Failed to load Google Maps API script'));
+            document.head.appendChild(script);
+        })();
+        window.__AUTH_TOKEN__ = __CUSTOMER_AUTH_TOKEN__;
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
@@ -32,71 +61,11 @@
             from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .otp-input::-webkit-outer-spin-button,
-        .otp-input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        .otp-input[type=number] {
-            -moz-appearance: textfield;
-        }
     </style>
-    <script>
-        let googleMapsResolve;
-        window.googleMapsReady = new Promise((resolve) => {
-            googleMapsResolve = resolve;
-        });
-    </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=" defer></script>
-    <script>
-        (function () {
-            const key = GOOGLE_MAPS_API_KEY;
-            const script = document.createElement('script');
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry`;
-            script.async = true;
-            script.defer = true;
-            script.onload = () => googleMapsResolve?.();
-            document.head.appendChild(script);
-        })();
-    </script>
 </head>
 <body class="overflow-hidden">
     <div id="toast" class="fixed top-6 inset-x-0 flex justify-center pointer-events-none z-50 hidden">
         <div class="bg-red-500 text-white px-4 py-2 rounded-full shadow-lg text-sm" id="toast-message"></div>
-    </div>
-
-    <!-- Login Screen -->
-    <div id="auth-container" class="h-screen w-screen flex items-center justify-center bg-slate-100 p-4">
-        <div class="w-full max-w-sm bg-white rounded-2xl shadow-xl p-8 space-y-6">
-            <div class="text-center">
-                <div class="flex items-center justify-center gap-2 text-blue-600 mb-2">
-                    <i class="ph ph-package text-3xl"></i>
-                    <h1 class="text-3xl font-bold">وصلني</h1>
-                </div>
-                <p class="text-sm text-slate-500">خدمة التوصيل المحلية الفورية</p>
-            </div>
-
-            <div id="phone-state" class="space-y-4">
-                <label class="block text-slate-600 text-sm font-medium">رقم الجوال</label>
-                <input id="phone-input" type="tel" placeholder="05XXXXXXXX" class="w-full rounded-xl border border-slate-200 px-4 py-3 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-                <button id="send-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">إرسال رمز التحقق</button>
-            </div>
-
-            <div id="otp-state" class="space-y-4 hidden">
-                <div class="text-center">
-                    <h2 class="text-xl font-semibold text-slate-800">أدخل رمز التحقق</h2>
-                    <p class="text-sm text-slate-500">تم إرسال الرمز إلى <span id="user-phone-display" class="font-bold"></span></p>
-                </div>
-                <div class="flex justify-center gap-3">
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <input type="number" maxlength="1" class="otp-input w-14 h-14 rounded-xl border border-slate-200 text-center text-2xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <button id="verify-otp-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تأكيد الدخول</button>
-                <button id="back-to-phone-btn" class="w-full text-sm text-slate-500">تغيير رقم الجوال</button>
-            </div>
-        </div>
     </div>
 
     <!-- Main App Container -->
@@ -198,20 +167,9 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        const authContainer = document.getElementById('auth-container');
         const appContainer = document.getElementById('app-container');
         const toast = document.getElementById('toast');
         const toastMessage = document.getElementById('toast-message');
-
-        const phoneState = document.getElementById('phone-state');
-        const otpState = document.getElementById('otp-state');
-        const sendOtpBtn = document.getElementById('send-otp-btn');
-        const verifyOtpBtn = document.getElementById('verify-otp-btn');
-        const backToPhoneBtn = document.getElementById('back-to-phone-btn');
-        const phoneInput = document.getElementById('phone-input');
-        const userPhoneDisplay = document.getElementById('user-phone-display');
-        const otpInputs = [...document.querySelectorAll('#otp-state .otp-input')];
-
         const logoutBtn = document.getElementById('logout-btn');
         const bottomSheet = document.getElementById('bottom-sheet');
         const centerMarker = document.getElementById('center-marker');
@@ -241,7 +199,11 @@
             delivered: document.getElementById('state-delivered')
         };
 
-        let authToken = null;
+        let authToken = window.__AUTH_TOKEN__ || '';
+        if (!authToken) {
+            window.location.replace('/');
+            return;
+        }
         let socket = null;
         let map = null;
         let directionsService = null;
@@ -276,7 +238,16 @@
 
         async function initMap() {
             if (mapReady) return;
-            await window.googleMapsReady;
+            try {
+                await window.googleMapsReady;
+            } catch (error) {
+                showToast('تعذر تحميل خريطة Google. تحقق من إعداد المفتاح.', true);
+                return;
+            }
+            if (typeof google === 'undefined' || !google.maps) {
+                showToast('تعذر تحميل خريطة Google. تحقق من إعداد المفتاح.', true);
+                return;
+            }
             map = new google.maps.Map(document.getElementById('map'), {
                 center: { lat: 24.7136, lng: 46.6753 },
                 zoom: 14,
@@ -438,59 +409,6 @@
             }).catch(() => {
                 showToast('تعذر رسم المسار على الخريطة.');
             });
-        }
-
-        async function sendOtp() {
-            const phone = phoneInput.value.trim();
-            if (phone.length < 9) {
-                showToast('الرجاء إدخال رقم جوال صحيح.');
-                return;
-            }
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phoneNumber: phone })
-                });
-                if (!response.ok) {
-                    throw new Error('تعذر إرسال رمز التحقق.');
-                }
-                userPhoneDisplay.textContent = phone;
-                phoneState.classList.add('hidden');
-                otpState.classList.remove('hidden');
-                otpInputs[0].focus();
-            } catch (error) {
-                showToast(error.message || 'حدث خطأ غير متوقع.');
-            }
-        }
-
-        async function verifyOtp() {
-            const otpCode = otpInputs.map((input) => input.value.trim()).join('');
-            if (otpCode.length !== 4) {
-                showToast('الرجاء إدخال رمز مكون من 4 أرقام.');
-                return;
-            }
-            const phone = phoneInput.value.trim();
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phoneNumber: phone, otpCode })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'فشل تسجيل الدخول.');
-                }
-                authToken = data.token;
-                await initMap();
-                authContainer.classList.add('hidden');
-                appContainer.classList.remove('hidden');
-                resetFlow();
-                setupSocket();
-                await fetchActiveOrder();
-            } catch (error) {
-                showToast(error.message || 'فشل تسجيل الدخول.');
-            }
         }
 
         function ensureJoinedOrder(orderId) {
@@ -701,14 +619,6 @@
             }
         }
 
-        sendOtpBtn.addEventListener('click', sendOtp);
-        verifyOtpBtn.addEventListener('click', verifyOtp);
-        backToPhoneBtn.addEventListener('click', () => {
-            otpState.classList.add('hidden');
-            phoneState.classList.remove('hidden');
-            otpInputs.forEach((input) => input.value = '');
-        });
-
         confirmLocationsBtn.addEventListener('click', async () => {
             if (!mapReady) return;
             if (appState === 'SETTING_PICKUP') {
@@ -739,36 +649,34 @@
         });
 
         logoutBtn.addEventListener('click', () => {
-            authToken = null;
+            localStorage.removeItem('authToken');
+            authToken = '';
             activeOrderId = null;
+            activeOrderData = null;
             if (socket) {
                 socket.disconnect();
                 socket = null;
             }
             resetFlow(true);
-            appContainer.classList.add('hidden');
-            authContainer.classList.remove('hidden');
-            phoneState.classList.remove('hidden');
-            otpState.classList.add('hidden');
-            otpInputs.forEach((input) => input.value = '');
-            phoneInput.value = '';
+            window.location.replace('/');
         });
 
-        otpInputs.forEach((input, index) => {
-            input.addEventListener('input', () => {
-                if (input.value.length > 1) {
-                    input.value = input.value.slice(-1);
-                }
-                if (input.value && index < otpInputs.length - 1) {
-                    otpInputs[index + 1].focus();
-                }
-            });
-            input.addEventListener('keydown', (event) => {
-                if (event.key === 'Backspace' && !input.value && index > 0) {
-                    otpInputs[index - 1].focus();
-                }
-            });
-        });
+        async function bootstrapApp() {
+            if (!API_BASE_URL) {
+                showToast('لم يتم ضبط مسار الخادم. راجع إعدادات config.js.', true);
+                return;
+            }
+            appContainer.classList.remove('hidden');
+            await initMap();
+            if (!mapReady) {
+                return;
+            }
+            resetFlow(true);
+            setupSocket();
+            await fetchActiveOrder();
+        }
+
+        bootstrapApp();
     });
     </script>
 </body>
