@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>تسجيل الدخول – Mandob</title>
+
+  <!-- تحميل الإعدادات العامة -->
+  <script src="/config.js"></script>
+
+  <style>
+    body{font-family: system-ui,Segoe UI,Roboto,Arial; margin:0; background:#f7f7f8;}
+    .wrap{max-width:420px; margin:6vh auto; background:#fff; padding:24px; border-radius:16px; box-shadow:0 6px 24px rgba(0,0,0,.06);}
+    h1{margin:0 0 8px; font-size:24px}
+    p.hint{margin:0 0 16px; color:#666}
+    label{display:block; margin:12px 0 6px}
+    input,button{width:100%; padding:12px; border-radius:10px; border:1px solid #ddd; font-size:16px}
+    button{background:#0f73ff; color:#fff; border:none; cursor:pointer; margin-top:12px}
+    button:disabled{opacity:.6; cursor:default}
+    .roles{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px}
+    .linkbtn{background:#fff; color:#0f73ff; border:1px solid #0f73ff}
+    .footer{margin-top:16px; font-size:13px; color:#777; text-align:center}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>تسجيل العميل</h1>
+    <p class="hint">ادخل رقم جوالك وسنرسل كود تحقق (OTP)</p>
+
+    <label>رقم الجوال</label>
+    <input id="phone" placeholder="مثال: 01012345678" />
+
+    <div id="otpArea" style="display:none">
+      <label>كود التحقق</label>
+      <input id="otp" placeholder="أدخل الكود" />
+    </div>
+
+    <button id="sendOtpBtn">إرسال الكود</button>
+    <button id="verifyBtn" style="display:none">تأكيد الدخول</button>
+
+    <div class="roles">
+      <button class="linkbtn" id="driverBtn">أنا مندوب</button>
+      <button class="linkbtn" id="adminBtn">لوحة المشرف</button>
+    </div>
+
+    <div class="footer">تريد الواجهة القديمة؟ افتح صفحة <a href="/delivery_app.html">العميل</a> مباشرة.</div>
+  </div>
+
+  <script>
+    const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+    const phoneEl = document.getElementById('phone');
+    const otpEl = document.getElementById('otp');
+    const otpArea = document.getElementById('otpArea');
+    const sendBtn = document.getElementById('sendOtpBtn');
+    const verifyBtn = document.getElementById('verifyBtn');
+
+    // أزرار التنقّل للأدوار الأخرى
+    document.getElementById('driverBtn').onclick = () => location.href = '/driver_app.html';
+    document.getElementById('adminBtn').onclick  = () => location.href = '/admin_panel.html';
+
+    sendBtn.onclick = async () => {
+      const phone = (phoneEl.value || '').trim();
+      if (!phone) return alert('أدخل رقم الجوال');
+      sendBtn.disabled = true;
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ phone })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.message || 'فشل إرسال الكود');
+        otpArea.style.display = 'block';
+        verifyBtn.style.display = 'inline-block';
+        alert(data.mock ? 'وضع التطوير: تم توليد OTP في الخادم (راجع الـconsole)' : 'تم إرسال الكود');
+      } catch(e){
+        alert(e.message);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    };
+
+    verifyBtn.onclick = async () => {
+      const phone = (phoneEl.value || '').trim();
+      const code  = (otpEl.value || '').trim();
+      if (!code) return alert('أدخل كود التحقق');
+      verifyBtn.disabled = true;
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ phone, code, role: 'customer' })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.message || 'فشل التحقق');
+        // بعد الدخول كـ عميل نوجّهه لواجهة العميل الحالية
+        location.href = '/delivery_app.html';
+      } catch(e){
+        alert(e.message);
+      } finally {
+        verifyBtn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

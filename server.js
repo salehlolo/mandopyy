@@ -479,14 +479,19 @@ app.get('/config.js', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.get('/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
 // --- Authentication Endpoints ---
-app.post('/api/auth/request-otp', async (req, res, next) => {
+const requestOtpHandler = async (req, res, next) => {
   try {
-    const { phoneNumber } = req.body || {};
+    const body = req.body || {};
+    const phoneNumber = body.phoneNumber || body.phone;
     if (!phoneNumber) {
       throw new HttpError(400, 'Phone number is required');
     }
@@ -510,11 +515,16 @@ app.post('/api/auth/request-otp', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+};
 
-app.post('/api/auth/verify-otp', async (req, res, next) => {
+app.post('/api/auth/request-otp', requestOtpHandler);
+app.post('/api/auth/otp/request', requestOtpHandler);
+
+const verifyOtpHandler = async (req, res, next) => {
   try {
-    const { phoneNumber, otpCode } = req.body || {};
+    const body = req.body || {};
+    const phoneNumber = body.phoneNumber || body.phone;
+    const otpCode = body.otpCode || body.code;
     if (!phoneNumber || !otpCode) {
       throw new HttpError(400, 'Phone number and OTP are required');
     }
@@ -537,7 +547,10 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+};
+
+app.post('/api/auth/verify-otp', verifyOtpHandler);
+app.post('/api/auth/otp/verify', verifyOtpHandler);
 
 // --- Auth middleware ---
 async function authenticate(req, res, next) {
