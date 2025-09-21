@@ -189,5 +189,30 @@
 
     updateMode('login');
   </script>
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.7}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu">
+    <b>Dev</b> ·
+    <a href="/index.html">Home</a> |
+    <a href="/delivery_app.html">Customer</a> |
+    <a href="/driver_app.html">Driver</a> |
+    <a href="/admin_panel.html">Admin</a> ·
+    <button class="btn" id="setToken">Mock Login</button>
+    <button class="btn" id="clearToken">Logout</button>
+  </div>
+  <script>
+    document.getElementById('setToken')?.addEventListener('click', () => {
+      localStorage.setItem('authToken', 'dev-token');
+      alert('Mock token set');
+    });
+    document.getElementById('clearToken')?.addEventListener('click', () => {
+      localStorage.removeItem('authToken');
+      alert('Token removed');
+    });
+  </script>
 </body>
 </html>

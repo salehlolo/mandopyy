@@ -16,6 +16,8 @@
    - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` – optional OAuth credentials if you want to enable Google login.
    - `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` – optional OAuth credentials for Facebook login.
    - `BASE_URL` / `FRONTEND_URL` – used by the server to build absolute links (e.g. when returning from OAuth flows).
+   - `MAP_PROVIDER`, `OSM_ROUTING_URL`, `NOMINATIM_URL` – configure the map stack. Defaults point to Leaflet + open-source OSRM/Nominatim which are suitable for development.
+   - `MAPTILER_KEY` / `MAPBOX_TOKEN` – optional production-ready providers if you want to switch to vector tiles or managed routing.
 
 3. Start the server:
 

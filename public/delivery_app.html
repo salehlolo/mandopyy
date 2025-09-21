@@ -6,40 +6,22 @@
     <title>وصلني - تطبيق العميل</title>
     <script src="/config.js"></script>
     <script>
-        const { API_BASE_URL, GOOGLE_MAPS_API_KEY } = window.__APP_CONFIG__ || {};
-        let __CUSTOMER_AUTH_TOKEN__ = localStorage.getItem('authToken');
+        const { API_BASE_URL, NOMINATIM_URL, OSM_ROUTING_URL } = window.__APP_CONFIG__ || {};
+        const __CUSTOMER_AUTH_TOKEN__ = localStorage.getItem('authToken');
         if (!__CUSTOMER_AUTH_TOKEN__) {
             window.location.replace('/');
         }
-        let googleMapsResolve;
-        let googleMapsReject;
-        window.googleMapsReady = new Promise((resolve, reject) => {
-            googleMapsResolve = resolve;
-            googleMapsReject = reject;
-        });
-        (function loadGoogleMapsOnce() {
-            if (!GOOGLE_MAPS_API_KEY) {
-                console.warn('GOOGLE_MAPS_API_KEY is missing.');
-                googleMapsResolve?.();
-                return;
-            }
-            if (document.getElementById('google-maps-sdk')) {
-                return;
-            }
-            const script = document.createElement('script');
-            script.id = 'google-maps-sdk';
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&libraries=places,geometry`;
-            script.async = true;
-            script.defer = true;
-            script.onload = () => googleMapsResolve?.();
-            script.onerror = () => googleMapsReject?.(new Error('Failed to load Google Maps API script'));
-            document.head.appendChild(script);
-        })();
         window.__AUTH_TOKEN__ = __CUSTOMER_AUTH_TOKEN__;
     </script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
     <style>
         html, body {
             font-family: 'Tajawal', 'Inter', sans-serif;
@@ -51,6 +33,7 @@
             height: 100vh;
             width: 100vw;
         }
+        .leaflet-routing-container { display: none !important; }
         .bottom-sheet {
             transition: transform 0.35s ease-in-out;
         }
@@ -181,8 +164,15 @@
         </div>
     </div>
 
-    <script>
+<script>
     document.addEventListener('DOMContentLoaded', () => {
+        const { API_BASE_URL, NOMINATIM_URL, OSM_ROUTING_URL } = window.__APP_CONFIG__ || {};
+        const authToken = window.__AUTH_TOKEN__ || '';
+        if (!authToken) {
+            window.location.replace('/');
+            return;
+        }
+
         const appContainer = document.getElementById('app-container');
         const toast = document.getElementById('toast');
         const toastMessage = document.getElementById('toast-message');
@@ -218,32 +208,24 @@
             delivered: document.getElementById('state-delivered')
         };
 
-        let authToken = window.__AUTH_TOKEN__ || '';
-        if (!authToken) {
-            window.location.replace('/');
-            return;
-        }
         let socket = null;
-        let map = null;
-        let directionsService = null;
-        let directionsRenderer = null;
-        let geocoder = null;
+        let map;
         let mapReady = false;
         let pickupCoords = null;
         let dropoffCoords = null;
         let pickupMarker = null;
         let dropoffMarker = null;
         let driverMarker = null;
-        let driverPath = null;
-        let driverPathCoordinates = [];
+        let driverTrail = null;
+        let driverTrailCoords = [];
+        let routingControl = null;
         let quoteData = null;
         let activeOrderId = null;
         let activeOrderData = null;
         let appState = 'SETTING_PICKUP';
-        let pickupAutocomplete = null;
-        let dropoffAutocomplete = null;
-        let distanceMatrixService = null;
-        let trafficLayer = null;
+
+        const geocodingBaseUrl = (NOMINATIM_URL || 'https://nominatim.openstreetmap.org').replace(/\/$/, '');
+        const routingBaseUrl = (OSM_ROUTING_URL || 'https://router.project-osrm.org/route/v1').replace(/\/$/, '');
 
         function showToast(message, isError = true) {
             toastMessage.textContent = message;
@@ -261,195 +243,206 @@
             }
         }
 
-        async function initMap() {
-            if (mapReady) return;
-            try {
-                await window.googleMapsReady;
-            } catch (error) {
-                showToast('تعذر تحميل خريطة Google. تحقق من إعداد المفتاح.', true);
-                return;
-            }
-            if (typeof google === 'undefined' || !google.maps) {
-                showToast('تعذر تحميل خريطة Google. تحقق من إعداد المفتاح.', true);
-                return;
-            }
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 24.7136, lng: 46.6753 },
-                zoom: 14,
-                disableDefaultUI: true,
-                gestureHandling: 'greedy'
+        function buildMarkerIcon(color, emoji = '') {
+            return L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background:${color};border-radius:50%;width:28px;height:28px;border:3px solid #fff;box-shadow:0 4px 12px rgba(15,23,42,0.35);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;">${emoji}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 28]
             });
-            directionsService = new google.maps.DirectionsService();
-            directionsRenderer = new google.maps.DirectionsRenderer({
-                suppressMarkers: true,
-                polylineOptions: { strokeColor: '#2563eb', strokeWeight: 6 }
-            });
-            directionsRenderer.setMap(map);
-            geocoder = new google.maps.Geocoder();
-            distanceMatrixService = new google.maps.DistanceMatrixService();
-            trafficLayer = new google.maps.TrafficLayer();
-            trafficLayer.setMap(map);
-            mapReady = true;
-
-            if (pickupSearchInput) {
-                pickupAutocomplete = new google.maps.places.Autocomplete(pickupSearchInput, {
-                    fields: ['geometry', 'formatted_address']
-                });
-                pickupAutocomplete.addListener('place_changed', handlePickupPlace);
-            }
-            if (dropoffSearchInput) {
-                dropoffAutocomplete = new google.maps.places.Autocomplete(dropoffSearchInput, {
-                    fields: ['geometry', 'formatted_address']
-                });
-                dropoffAutocomplete.addListener('place_changed', handleDropoffPlace);
-            }
-
-            map.addListener('dragstart', () => {
-                confirmLocationsBtn.disabled = false;
-                centerMarker.classList.add('-translate-y-[55%]');
-            });
-            map.addListener('dragend', () => {
-                centerMarker.classList.remove('-translate-y-[55%]');
-            });
-
-            setTimeout(() => {
-                bottomSheet.classList.remove('translate-y-full');
-            }, 200);
         }
 
         function resetMapArtifacts() {
+            if (!mapReady) return;
             if (pickupMarker) {
-                pickupMarker.setMap(null);
+                map.removeLayer(pickupMarker);
                 pickupMarker = null;
             }
             if (dropoffMarker) {
-                dropoffMarker.setMap(null);
+                map.removeLayer(dropoffMarker);
                 dropoffMarker = null;
             }
             if (driverMarker) {
-                driverMarker.setMap(null);
+                map.removeLayer(driverMarker);
                 driverMarker = null;
             }
-            if (driverPath) {
-                driverPath.setMap(null);
-                driverPath = null;
-                driverPathCoordinates = [];
+            if (routingControl) {
+                routingControl.setWaypoints([]);
+                map.removeControl(routingControl);
+                routingControl = null;
             }
-            if (directionsRenderer) {
-                directionsRenderer.set('directions', null);
-            }
-        }
-
-        function resetFlow(clearOrder = true) {
-            appState = 'SETTING_PICKUP';
-            pickupCoords = null;
-            dropoffCoords = null;
-            quoteData = null;
-            durationTextEl.textContent = '-';
-            pickupAddressEl.textContent = 'لم يتم تحديد نقطة الاستلام';
-            dropoffAddressEl.textContent = 'لم يتم تحديد نقطة التسليم';
-            confirmLocationsBtn.disabled = true;
-            markerLabel.textContent = 'حدد نقطة الاستلام';
-            centerMarker.classList.remove('hidden');
-            if (pickupSearchInput) {
-                pickupSearchInput.value = '';
-            }
-            if (dropoffSearchInput) {
-                dropoffSearchInput.value = '';
-                dropoffSearchInput.disabled = true;
-            }
-            resetMapArtifacts();
-            switchSheetState('create');
-            if (mapReady) {
-                map.panTo({ lat: 24.7136, lng: 46.6753 });
-                map.setZoom(14);
-            }
-            if (clearOrder) {
-                activeOrderId = null;
-                activeOrderData = null;
+            driverTrailCoords = [];
+            if (driverTrail) {
+                driverTrail.setLatLngs([]);
             }
         }
 
-        function placeMarker(type, position) {
-            const iconBase = type === 'pickup'
-                ? 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png'
-                : 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png';
-            const marker = new google.maps.Marker({
-                position,
-                map,
-                icon: iconBase,
-                draggable: type !== 'driver'
+        function fitMapToImportantPoints() {
+            if (!mapReady) return;
+            const points = [];
+            if (pickupCoords) points.push([pickupCoords.lat, pickupCoords.lng]);
+            if (dropoffCoords) points.push([dropoffCoords.lat, dropoffCoords.lng]);
+            if (driverMarker) {
+                const latLng = driverMarker.getLatLng();
+                points.push([latLng.lat, latLng.lng]);
+            }
+            if (points.length) {
+                map.fitBounds(points, { padding: [80, 80] });
+            }
+        }
+
+        function initMap() {
+            if (mapReady) return;
+            map = L.map('map', {
+                center: [24.7136, 46.6753],
+                zoom: 14,
+                zoomControl: false,
+                attributionControl: false
             });
-            if (type === 'pickup' || type === 'dropoff') {
-                marker.addListener('dragend', (event) => {
-                    const latLng = event.latLng;
-                    if (!latLng) return;
-                    if (type === 'pickup') {
-                        pickupCoords = latLng;
-                        geocodeLatLng({ lat: latLng.lat(), lng: latLng.lng() }, pickupAddressEl);
-                    } else {
-                        dropoffCoords = latLng;
-                        geocodeLatLng({ lat: latLng.lat(), lng: latLng.lng() }, dropoffAddressEl);
-                    }
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+            driverTrail = L.polyline([], { color: '#f97316', weight: 4, opacity: 0.8 }).addTo(map);
+            mapReady = true;
+
+            map.on('movestart', () => {
+                confirmLocationsBtn.disabled = false;
+                centerMarker.classList.add('-translate-y-[55%]');
+            });
+            map.on('moveend', () => {
+                centerMarker.classList.remove('-translate-y-[55%]');
+            });
+            map.on('click', (event) => {
+                const { lat, lng } = event.latlng || {};
+                if (!lat && lat !== 0) return;
+                if (!pickupCoords) {
+                    setPickup({ lat, lng });
+                    appState = 'SETTING_DROPOFF';
+                    markerLabel.textContent = 'حدد نقطة التسليم';
+                    confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
+                    confirmLocationsBtn.disabled = true;
+                    dropoffSearchInput.disabled = false;
+                    dropoffSearchInput.focus();
+                } else if (!dropoffCoords) {
+                    setDropoff({ lat, lng });
+                    finishLocationSelection();
+                }
+            });
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((pos) => {
+                    const ll = [pos.coords.latitude, pos.coords.longitude];
+                    map.setView(ll, 15);
+                });
+            }
+
+            setTimeout(() => bottomSheet.classList.remove('translate-y-full'), 200);
+        }
+
+        function setPickup(coords) {
+            pickupCoords = { lat: Number(coords.lat), lng: Number(coords.lng) };
+            if (!pickupMarker) {
+                pickupMarker = L.marker([pickupCoords.lat, pickupCoords.lng], {
+                    draggable: true,
+                    icon: buildMarkerIcon('#2563eb', 'A')
+                }).addTo(map);
+                pickupMarker.on('dragend', (event) => {
+                    const { lat, lng } = event.target.getLatLng();
+                    pickupCoords = { lat, lng };
+                    geocodeLatLng(pickupCoords, pickupAddressEl);
                     renderRoute();
                     requestQuote();
-                    updateDistanceMatrixInfo();
-                });
-            }
-            return marker;
-        }
-
-        function updateDriverMarker(position) {
-            if (!mapReady) return;
-            const latLng = new google.maps.LatLng(position.lat, position.lng);
-            if (!driverMarker) {
-                driverMarker = new google.maps.Marker({
-                    position: latLng,
-                    map,
-                    icon: {
-                        url: 'https://maps.gstatic.com/mapfiles/ms2/micons/cabs.png',
-                        scaledSize: new google.maps.Size(42, 42)
-                    }
                 });
             } else {
-                driverMarker.setPosition(latLng);
+                pickupMarker.setLatLng([pickupCoords.lat, pickupCoords.lng]);
             }
-            if (!driverPath) {
-                driverPath = new google.maps.Polyline({
-                    map,
-                    strokeColor: '#f97316',
-                    strokeOpacity: 0.75,
-                    strokeWeight: 4
+            geocodeLatLng(pickupCoords, pickupAddressEl);
+        }
+
+        function setDropoff(coords) {
+            dropoffCoords = { lat: Number(coords.lat), lng: Number(coords.lng) };
+            if (!dropoffMarker) {
+                dropoffMarker = L.marker([dropoffCoords.lat, dropoffCoords.lng], {
+                    draggable: true,
+                    icon: buildMarkerIcon('#22c55e', 'B')
+                }).addTo(map);
+                dropoffMarker.on('dragend', (event) => {
+                    const { lat, lng } = event.target.getLatLng();
+                    dropoffCoords = { lat, lng };
+                    geocodeLatLng(dropoffCoords, dropoffAddressEl);
+                    renderRoute();
+                    requestQuote();
                 });
+            } else {
+                dropoffMarker.setLatLng([dropoffCoords.lat, dropoffCoords.lng]);
             }
-            driverPathCoordinates.push(latLng);
-            if (driverPathCoordinates.length > 60) {
-                driverPathCoordinates.shift();
-            }
-            driverPath.setPath(driverPathCoordinates);
+            geocodeLatLng(dropoffCoords, dropoffAddressEl);
         }
 
-        function computeEtaMetersToMinutes(position, target) {
-            if (!position || !target || !google.maps.geometry) return '-';
-            const distanceMeters = google.maps.geometry.spherical.computeDistanceBetween(
-                new google.maps.LatLng(position.lat, position.lng),
-                new google.maps.LatLng(target.lat, target.lng)
-            );
-            const minutes = Math.ceil((distanceMeters / 1000) / 40 * 60);
-            return `${minutes} دقيقة`;
-        }
-
-        async function geocodeLatLng(latLng, targetEl) {
-            if (!geocoder) return;
+        async function geocodeLatLng(coords, targetEl) {
+            if (!coords || !targetEl) return;
             try {
-                const { results } = await geocoder.geocode({ location: latLng });
-                if (results && results.length) {
-                    targetEl.textContent = results[0].formatted_address;
+                const url = `${geocodingBaseUrl}/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=0`;
+                const response = await fetch(url, {
+                    headers: { 'Accept': 'application/json', 'User-Agent': 'waslny-mvp/1.0' }
+                });
+                const data = await response.json();
+                if (data?.display_name) {
+                    targetEl.textContent = data.display_name;
                 } else {
-                    targetEl.textContent = `(${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)})`;
+                    targetEl.textContent = `(${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`;
                 }
-            } catch (err) {
-                targetEl.textContent = `(${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)})`;
+            } catch (error) {
+                targetEl.textContent = `(${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`;
+            }
+        }
+
+        async function geocodeSearch(query) {
+            if (!query) return null;
+            try {
+                const url = `${geocodingBaseUrl}/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+                const response = await fetch(url, {
+                    headers: { 'Accept': 'application/json', 'User-Agent': 'waslny-mvp/1.0' }
+                });
+                const results = await response.json();
+                if (!results?.length) return null;
+                return {
+                    lat: Number(results[0].lat),
+                    lng: Number(results[0].lon),
+                    label: results[0].display_name
+                };
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function renderRoute() {
+            if (!pickupCoords || !dropoffCoords || !mapReady) return;
+            const waypoints = [
+                L.latLng(pickupCoords.lat, pickupCoords.lng),
+                L.latLng(dropoffCoords.lat, dropoffCoords.lng)
+            ];
+            if (!routingControl) {
+                routingControl = L.Routing.control({
+                    waypoints,
+                    router: L.Routing.osrmv1({ serviceUrl: routingBaseUrl }),
+                    show: false,
+                    addWaypoints: false,
+                    draggableWaypoints: false,
+                    fitSelectedRoutes: true,
+                    lineOptions: { styles: [{ color: '#2563eb', weight: 6 }] }
+                }).on('routesfound', (event) => {
+                    const route = event.routes?.[0];
+                    if (!route) return;
+                    const km = route.summary.totalDistance / 1000;
+                    const minutes = route.summary.totalTime / 60;
+                    distanceTextEl.textContent = `${km.toFixed(2)} كم`;
+                    durationTextEl.textContent = `${Math.round(minutes)} دقيقة`;
+                    fitMapToImportantPoints();
+                }).addTo(map);
+            } else {
+                routingControl.setWaypoints(waypoints);
             }
         }
 
@@ -462,126 +455,298 @@
                         'Content-Type': 'application/json',
                         Authorization: `Bearer ${authToken}`
                     },
-                    body: JSON.stringify({
-                        pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() },
-                        dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }
-                    })
+                    body: JSON.stringify({ pickup: pickupCoords, dropoff: dropoffCoords })
                 });
-                if (!response.ok) {
-                    throw new Error('تعذر الحصول على التسعيرة. حاول مرة أخرى.');
-                }
                 const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data?.message || 'تعذر الحصول على التسعيرة.');
+                }
                 quoteData = data;
-                distanceTextEl.textContent = `${Number(data.distanceKm).toFixed(2)} كم`;
+                if (typeof data.distanceKm === 'number') {
+                    distanceTextEl.textContent = `${Number(data.distanceKm).toFixed(2)} كم`;
+                }
+                if (typeof data.durationMin === 'number') {
+                    durationTextEl.textContent = `${Math.round(Number(data.durationMin))} دقيقة`;
+                }
                 priceTextEl.textContent = `${Number(data.price).toFixed(2)} ر.س`;
-                durationTextEl.textContent = '-';
-                updateDistanceMatrixInfo();
             } catch (error) {
                 showToast(error.message || 'حدث خطأ أثناء حساب التسعيرة.');
             }
         }
 
-        function renderRoute() {
-            if (!pickupCoords || !dropoffCoords) return;
-            directionsService.route({
-                origin: pickupCoords,
-                destination: dropoffCoords,
-                travelMode: google.maps.TravelMode.DRIVING
-            }).then((result) => {
-                directionsRenderer.setDirections(result);
-                const bounds = new google.maps.LatLngBounds();
-                bounds.extend(pickupCoords);
-                bounds.extend(dropoffCoords);
-                map.fitBounds(bounds, 120);
-            }).catch(() => {
-                showToast('تعذر رسم المسار على الخريطة.');
-            });
+        function haversineDistanceKm(a, b) {
+            const toRad = (v) => (v * Math.PI) / 180;
+            const R = 6371;
+            const dLat = toRad(b.lat - a.lat);
+            const dLng = toRad(b.lng - a.lng);
+            const lat1 = toRad(a.lat);
+            const lat2 = toRad(b.lat);
+            const sinLat = Math.sin(dLat / 2);
+            const sinLng = Math.sin(dLng / 2);
+            const c = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+            const d = 2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c));
+            return R * d;
         }
 
-        function updateDistanceMatrixInfo() {
-            if (!distanceMatrixService || !pickupCoords || !dropoffCoords) {
-                return;
-            }
-            distanceMatrixService.getDistanceMatrix({
-                origins: [pickupCoords],
-                destinations: [dropoffCoords],
-                travelMode: google.maps.TravelMode.DRIVING,
-                drivingOptions: { departureTime: new Date(), trafficModel: 'bestguess' }
-            }, (response, status) => {
-                if (status !== 'OK' || !response?.rows?.[0]?.elements?.[0]) {
-                    durationTextEl.textContent = 'غير متاح';
-                    return;
-                }
-                const element = response.rows[0].elements[0];
-                if (element.duration_in_traffic?.text) {
-                    durationTextEl.textContent = element.duration_in_traffic.text;
-                } else if (element.duration?.text) {
-                    durationTextEl.textContent = element.duration.text;
-                } else {
-                    durationTextEl.textContent = 'غير متاح';
-                }
-                if (element.distance?.text) {
-                    distanceTextEl.textContent = element.distance.text;
-                }
-            });
+        function computeEtaText(position, target) {
+            if (!position || !target) return '-';
+            const distanceKm = haversineDistanceKm(position, target);
+            if (!Number.isFinite(distanceKm) || distanceKm <= 0) return '-';
+            const minutes = Math.ceil((distanceKm / 40) * 60);
+            return `${minutes} دقيقة`;
         }
 
-        function handlePickupPlace() {
-            if (!pickupAutocomplete) return;
-            const place = pickupAutocomplete.getPlace();
-            if (!place || !place.geometry?.location) {
-                showToast('تعذر تحديد موقع الاستلام من البحث.');
-                return;
-            }
-            const location = place.geometry.location;
-            pickupCoords = location;
-            if (pickupMarker) {
-                pickupMarker.setPosition(location);
+        function updateDriverMarker(position) {
+            if (!mapReady || !position) return;
+            const latLng = [Number(position.lat), Number(position.lng)];
+            if (!driverMarker) {
+                driverMarker = L.marker(latLng, { icon: buildMarkerIcon('#f97316', '🚗') }).addTo(map);
             } else {
-                pickupMarker = placeMarker('pickup', location);
+                driverMarker.setLatLng(latLng);
             }
-            map.panTo(location);
-            map.setZoom(15);
-            geocodeLatLng({ lat: location.lat(), lng: location.lng() }, pickupAddressEl);
-            appState = 'SETTING_DROPOFF';
-            markerLabel.textContent = 'حدد نقطة التسليم';
-            confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
-            confirmLocationsBtn.disabled = true;
-            centerMarker.classList.remove('hidden');
-            if (dropoffSearchInput) {
-                dropoffSearchInput.disabled = false;
-                dropoffSearchInput.focus();
+            driverTrailCoords.push(latLng);
+            if (driverTrailCoords.length > 60) {
+                driverTrailCoords.shift();
+            }
+            if (driverTrail) {
+                driverTrail.setLatLngs(driverTrailCoords);
             }
         }
 
-        function handleDropoffPlace() {
-            if (!dropoffAutocomplete) return;
-            const place = dropoffAutocomplete.getPlace();
-            if (!place || !place.geometry?.location) {
-                showToast('تعذر تحديد موقع التسليم من البحث.');
-                return;
-            }
-            const location = place.geometry.location;
-            dropoffCoords = location;
-            if (dropoffMarker) {
-                dropoffMarker.setPosition(location);
-            } else {
-                dropoffMarker = placeMarker('dropoff', location);
-            }
-            map.panTo(location);
-            map.setZoom(15);
-            geocodeLatLng({ lat: location.lat(), lng: location.lng() }, dropoffAddressEl);
+        function finishLocationSelection() {
             centerMarker.classList.add('hidden');
             appState = 'CONFIRMING';
             renderRoute();
             requestQuote();
-            updateDistanceMatrixInfo();
             switchSheetState('confirm');
+        }
+
+        function resetFlow(clearOrder = true) {
+            appState = 'SETTING_PICKUP';
+            pickupCoords = null;
+            dropoffCoords = null;
+            quoteData = null;
+            distanceTextEl.textContent = '';
+            durationTextEl.textContent = '-';
+            priceTextEl.textContent = '';
+            pickupAddressEl.textContent = 'لم يتم تحديد نقطة الاستلام';
+            dropoffAddressEl.textContent = 'لم يتم تحديد نقطة التسليم';
+            confirmLocationsBtn.disabled = true;
+            confirmLocationsBtn.textContent = 'تأكيد الموقع الحالي';
+            markerLabel.textContent = 'حدد نقطة الاستلام';
+            centerMarker.classList.remove('hidden');
+            if (pickupSearchInput) {
+                pickupSearchInput.value = '';
+            }
+            if (dropoffSearchInput) {
+                dropoffSearchInput.value = '';
+                dropoffSearchInput.disabled = true;
+            }
+            resetMapArtifacts();
+            switchSheetState('create');
+            if (mapReady) {
+                map.setView([24.7136, 46.6753], 14);
+            }
+            if (clearOrder) {
+                activeOrderId = null;
+                activeOrderData = null;
+            }
         }
 
         function ensureJoinedOrder(orderId) {
             if (!orderId || !socket) return;
             socket.emit('order:join', { orderId });
+        }
+
+        function updateDriverInfo(driver) {
+            if (!driver) return;
+            driverNameEl.textContent = driver.name || 'مندوب';
+            driverVehicleEl.textContent = driver.vehicleType ? `${driver.vehicleType} - ${driver.licensePlate || ''}` : '-';
+            driverPhoneEl.textContent = driver.phoneNumber || '-';
+        }
+
+        function handleOrderUpdate(order) {
+            if (!order) return;
+            if (!pickupCoords || !dropoffCoords) {
+                hydrateOrderOnMap(order);
+            }
+            if (order.reason === 'NO_DRIVER') {
+                showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول لاحقاً.', false);
+                resetFlow(true);
+                return;
+            }
+            const statusMessages = {
+                CREATED: 'تم إنشاء الطلب، نبحث عن أقرب مندوب...',
+                SEARCHING_DRIVER: 'جاري البحث عن مندوب...',
+                DRIVER_ASSIGNED: 'المندوب في الطريق لنقطة الاستلام',
+                DRIVER_ARRIVED_PICKUP: 'المندوب وصل لنقطة الاستلام',
+                PICKED_UP: 'تم الاستلام - في الطريق للتسليم',
+                IN_TRANSIT: 'المندوب في الطريق إلى نقطة التسليم',
+                ARRIVED_DROPOFF: 'المندوب وصل إلى نقطة التسليم',
+                DELIVERED: 'تم توصيل الطلب بنجاح',
+                CANCELLED: 'تم إلغاء الطلب'
+            };
+            if (statusMessages[order.status]) {
+                orderStatusEl.textContent = statusMessages[order.status];
+            }
+            switch (order.status) {
+                case 'CREATED':
+                case 'SEARCHING_DRIVER':
+                    switchSheetState('searching');
+                    break;
+                case 'DRIVER_ASSIGNED':
+                case 'DRIVER_ARRIVED_PICKUP':
+                case 'PICKED_UP':
+                case 'IN_TRANSIT':
+                case 'ARRIVED_DROPOFF':
+                    updateDriverInfo(order.driver);
+                    switchSheetState('enRoute');
+                    break;
+                case 'DELIVERED':
+                    updateDriverInfo(order.driver);
+                    switchSheetState('delivered');
+                    break;
+                case 'CANCELLED':
+                    showToast('تم إلغاء الطلب.', false);
+                    resetFlow(true);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        async function createOrder() {
+            if (!pickupCoords || !dropoffCoords) {
+                showToast('الرجاء تحديد نقاط الاستلام والتسليم.');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ pickup: pickupCoords, dropoff: dropoffCoords })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data?.error || 'تعذر إنشاء الطلب.');
+                }
+                if (data.reason === 'NO_DRIVER') {
+                    showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول مرة أخرى لاحقاً.', false);
+                    resetFlow(true);
+                    return;
+                }
+                activeOrderId = data.id;
+                activeOrderData = {
+                    ...data,
+                    pickup: { ...pickupCoords },
+                    dropoff: { ...dropoffCoords }
+                };
+                if (socket) {
+                    socket.emit('order:join', { orderId: activeOrderId });
+                }
+                switchSheetState('searching');
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
+            }
+        }
+
+        async function cancelOrder() {
+            if (!activeOrderId) {
+                resetFlow(true);
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders/${activeOrderId}/cancel`, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data?.error || 'تعذر إلغاء الطلب.');
+                }
+                showToast('تم إلغاء الطلب.', false);
+                resetFlow(true);
+            } catch (error) {
+                showToast(error.message || 'تعذر إلغاء الطلب.');
+            }
+        }
+
+        async function fetchActiveOrder() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/orders/active`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data && data.id) {
+                    activeOrderId = data.id;
+                    activeOrderData = data;
+                    if (socket) {
+                        socket.emit('order:join', { orderId: data.id });
+                    }
+                    hydrateOrderOnMap(data);
+                    handleOrderUpdate(data);
+                } else {
+                    resetFlow(true);
+                }
+            } catch (error) {
+                console.error('Failed to fetch active order', error);
+            }
+        }
+
+        function hydrateOrderOnMap(order) {
+            if (!order) return;
+            pickupCoords = { lat: order.pickup.lat, lng: order.pickup.lng };
+            dropoffCoords = { lat: order.dropoff.lat, lng: order.dropoff.lng };
+            resetMapArtifacts();
+            setPickup(pickupCoords);
+            setDropoff(dropoffCoords);
+            centerMarker.classList.add('hidden');
+            renderRoute();
+            requestQuote();
+        }
+
+        function setupSearchInputs() {
+            if (pickupSearchInput) {
+                pickupSearchInput.addEventListener('keydown', async (event) => {
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    const query = (pickupSearchInput.value || '').trim();
+                    if (!query) return;
+                    const result = await geocodeSearch(query);
+                    if (!result) {
+                        showToast('تعذر العثور على العنوان المدخل.');
+                        return;
+                    }
+                    map.setView([result.lat, result.lng], 15);
+                    setPickup({ lat: result.lat, lng: result.lng });
+                    appState = 'SETTING_DROPOFF';
+                    markerLabel.textContent = 'حدد نقطة التسليم';
+                    confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
+                    confirmLocationsBtn.disabled = true;
+                    dropoffSearchInput.disabled = false;
+                    dropoffSearchInput.focus();
+                });
+            }
+            if (dropoffSearchInput) {
+                dropoffSearchInput.addEventListener('keydown', async (event) => {
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    const query = (dropoffSearchInput.value || '').trim();
+                    if (!query) return;
+                    const result = await geocodeSearch(query);
+                    if (!result) {
+                        showToast('تعذر العثور على العنوان المدخل.');
+                        return;
+                    }
+                    map.setView([result.lat, result.lng], 15);
+                    setDropoff({ lat: result.lat, lng: result.lng });
+                    finishLocationSelection();
+                });
+            }
         }
 
         function setupSocket() {
@@ -617,183 +782,22 @@
             socket.on('driver:location', (payload) => {
                 if (!payload || payload.orderId !== activeOrderId) return;
                 updateDriverMarker({ lat: payload.lat, lng: payload.lng });
-                if (activeOrderData && (activeOrderData.status === 'DRIVER_ASSIGNED' || activeOrderData.status === 'DRIVER_ARRIVED_PICKUP')) {
-                    driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.pickup);
-                } else if (activeOrderData && ['PICKED_UP', 'IN_TRANSIT', 'ARRIVED_DROPOFF'].includes(activeOrderData.status)) {
-                    driverEtaEl.textContent = computeEtaMetersToMinutes({ lat: payload.lat, lng: payload.lng }, activeOrderData.dropoff);
+                if (activeOrderData) {
+                    if (['DRIVER_ASSIGNED', 'DRIVER_ARRIVED_PICKUP'].includes(activeOrderData.status)) {
+                        driverEtaEl.textContent = computeEtaText({ lat: payload.lat, lng: payload.lng }, activeOrderData.pickup);
+                    } else if (['PICKED_UP', 'IN_TRANSIT', 'ARRIVED_DROPOFF'].includes(activeOrderData.status)) {
+                        driverEtaEl.textContent = computeEtaText({ lat: payload.lat, lng: payload.lng }, activeOrderData.dropoff);
+                    }
                 }
+                fitMapToImportantPoints();
             });
         }
 
-        async function fetchActiveOrder() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders/active`, {
-                    headers: { Authorization: `Bearer ${authToken}` }
-                });
-                if (!response.ok) return;
-                const data = await response.json();
-                if (data && data.id) {
-                    activeOrderId = data.id;
-                    activeOrderData = data;
-                    if (socket) {
-                        socket.emit('order:join', { orderId: data.id });
-                    }
-                    hydrateOrderOnMap(data);
-                    handleOrderUpdate(data);
-                } else {
-                    resetFlow(true);
-                }
-            } catch (error) {
-                console.error('Failed to fetch active order', error.message);
-            }
-        }
-
-        function hydrateOrderOnMap(order) {
-            pickupCoords = new google.maps.LatLng(order.pickup.lat, order.pickup.lng);
-            dropoffCoords = new google.maps.LatLng(order.dropoff.lat, order.dropoff.lng);
-            resetMapArtifacts();
-            pickupMarker = placeMarker('pickup', pickupCoords);
-            dropoffMarker = placeMarker('dropoff', dropoffCoords);
-            geocodeLatLng(order.pickup, pickupAddressEl);
-            geocodeLatLng(order.dropoff, dropoffAddressEl);
-            renderRoute();
-            updateDistanceMatrixInfo();
-            centerMarker.classList.add('hidden');
-        }
-
-        function handleOrderUpdate(order) {
-            if (!order) return;
-            if (!pickupCoords || !dropoffCoords) {
-                hydrateOrderOnMap(order);
-            }
-            if (order.reason === 'NO_DRIVER') {
-                showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول لاحقاً.', false);
-                resetFlow(true);
-                return;
-            }
-            const statusMessages = {
-                CREATED: 'تم إنشاء الطلب، نبحث عن أقرب مندوب...',
-                SEARCHING_DRIVER: 'جاري البحث عن مندوب...',
-                DRIVER_ASSIGNED: 'المندوب في الطريق لنقطة الاستلام',
-                DRIVER_ARRIVED_PICKUP: 'المندوب وصل لنقطة الاستلام',
-                PICKED_UP: 'تم الاستلام - في الطريق للتسليم',
-                IN_TRANSIT: 'المندوب في الطريق إلى نقطة التسليم',
-                ARRIVED_DROPOFF: 'المندوب وصل إلى نقطة التسليم',
-                DELIVERED: 'تم توصيل الطلب بنجاح',
-                CANCELLED: 'تم إلغاء الطلب'
-            };
-            if (statusMessages[order.status]) {
-                orderStatusEl.textContent = statusMessages[order.status];
-            }
-            switch (order.status) {
-                case 'CREATED':
-                case 'SEARCHING_DRIVER':
-                    switchSheetState('searching');
-                    break;
-                case 'DRIVER_ASSIGNED':
-                    updateDriverInfo(order.driver);
-                    driverEtaEl.textContent = '-';
-                    switchSheetState('enRoute');
-                    break;
-                case 'DRIVER_ARRIVED_PICKUP':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('enRoute');
-                    break;
-                case 'PICKED_UP':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('enRoute');
-                    break;
-                case 'IN_TRANSIT':
-                case 'ARRIVED_DROPOFF':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('enRoute');
-                    break;
-                case 'DELIVERED':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('delivered');
-                    break;
-                case 'CANCELLED':
-                    showToast('تم إلغاء الطلب.', false);
-                    resetFlow(true);
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        function updateDriverInfo(driver) {
-            if (!driver) return;
-            driverNameEl.textContent = driver.name || 'مندوب مجهول';
-            driverVehicleEl.textContent = driver.vehicleType ? `${driver.vehicleType} - ${driver.licensePlate || ''}` : '-';
-            driverPhoneEl.textContent = driver.phoneNumber || '-';
-        }
-
-        async function createOrder() {
-            if (!pickupCoords || !dropoffCoords) {
-                showToast('الرجاء تحديد نقاط الاستلام والتسليم.');
-                return;
-            }
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({
-                        pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() },
-                        dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }
-                    })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'تعذر إنشاء الطلب.');
-                }
-                if (data.reason === 'NO_DRIVER') {
-                    showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول مرة أخرى لاحقاً.', false);
-                    resetFlow(true);
-                    return;
-                }
-                activeOrderId = data.id;
-                activeOrderData = { ...data, pickup: { lat: pickupCoords.lat(), lng: pickupCoords.lng() }, dropoff: { lat: dropoffCoords.lat(), lng: dropoffCoords.lng() } };
-                if (socket) {
-                    socket.emit('order:join', { orderId: activeOrderId });
-                }
-                switchSheetState('searching');
-            } catch (error) {
-                showToast(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
-            }
-        }
-
-        async function cancelOrder() {
-            if (!activeOrderId) {
-                resetFlow(true);
-                return;
-            }
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders/${activeOrderId}/cancel`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${authToken}`
-                    }
-                });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'تعذر إلغاء الطلب.');
-                }
-                showToast('تم إلغاء الطلب.', false);
-                resetFlow(true);
-            } catch (error) {
-                showToast(error.message || 'تعذر إلغاء الطلب.');
-            }
-        }
-
-        confirmLocationsBtn.addEventListener('click', async () => {
+        confirmLocationsBtn.addEventListener('click', () => {
             if (!mapReady) return;
+            const center = map.getCenter();
             if (appState === 'SETTING_PICKUP') {
-                pickupCoords = map.getCenter();
-                pickupMarker = placeMarker('pickup', pickupCoords);
-                await geocodeLatLng({ lat: pickupCoords.lat(), lng: pickupCoords.lng() }, pickupAddressEl);
+                setPickup({ lat: center.lat, lng: center.lng });
                 appState = 'SETTING_DROPOFF';
                 markerLabel.textContent = 'حدد نقطة التسليم';
                 confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
@@ -801,14 +805,8 @@
                 dropoffSearchInput.disabled = false;
                 dropoffSearchInput.focus();
             } else if (appState === 'SETTING_DROPOFF') {
-                dropoffCoords = map.getCenter();
-                dropoffMarker = placeMarker('dropoff', dropoffCoords);
-                await geocodeLatLng({ lat: dropoffCoords.lat(), lng: dropoffCoords.lng() }, dropoffAddressEl);
-                centerMarker.classList.add('hidden');
-                appState = 'CONFIRMING';
-                renderRoute();
-                await requestQuote();
-                switchSheetState('confirm');
+                setDropoff({ lat: center.lat, lng: center.lng });
+                finishLocationSelection();
             }
         });
 
@@ -821,9 +819,6 @@
 
         logoutBtn.addEventListener('click', () => {
             localStorage.removeItem('authToken');
-            authToken = '';
-            activeOrderId = null;
-            activeOrderData = null;
             if (socket) {
                 socket.disconnect();
                 socket = null;
@@ -838,17 +833,43 @@
                 return;
             }
             appContainer.classList.remove('hidden');
-            await initMap();
+            initMap();
             if (!mapReady) {
                 return;
             }
             resetFlow(true);
+            setupSearchInputs();
             setupSocket();
             await fetchActiveOrder();
         }
 
         bootstrapApp();
     });
+    </script>
+    <style>
+        .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.7}
+        .dev-menu:hover{opacity:1}
+        .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+        .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+    </style>
+    <div class="dev-menu">
+        <b>Dev</b> ·
+        <a href="/index.html">Home</a> |
+        <a href="/delivery_app.html">Customer</a> |
+        <a href="/driver_app.html">Driver</a> |
+        <a href="/admin_panel.html">Admin</a> ·
+        <button class="btn" id="setToken">Mock Login</button>
+        <button class="btn" id="clearToken">Logout</button>
+    </div>
+    <script>
+        document.getElementById('setToken')?.addEventListener('click', () => {
+            localStorage.setItem('authToken', 'dev-token');
+            alert('Mock token set');
+        });
+        document.getElementById('clearToken')?.addEventListener('click', () => {
+            localStorage.removeItem('authToken');
+            alert('Token removed');
+        });
     </script>
 </body>
 </html>
