@@ -1,875 +1,634 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>وصلني - تطبيق العميل</title>
-    <script src="/config.js"></script>
-    <script>
-        const { API_BASE_URL, NOMINATIM_URL, OSM_ROUTING_URL } = window.__APP_CONFIG__ || {};
-        const __CUSTOMER_AUTH_TOKEN__ = localStorage.getItem('authToken');
-        if (!__CUSTOMER_AUTH_TOKEN__) {
-            window.location.replace('/');
-        }
-        window.__AUTH_TOKEN__ = __CUSTOMER_AUTH_TOKEN__;
-    </script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
-    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
-    <style>
-        html, body {
-            font-family: 'Tajawal', 'Inter', sans-serif;
-            overscroll-behavior-y: contain;
-            background-color: #f8fafc;
-        }
-        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
-        #map {
-            height: 100vh;
-            width: 100vw;
-        }
-        .leaflet-routing-container { display: none !important; }
-        .bottom-sheet {
-            transition: transform 0.35s ease-in-out;
-        }
-        .sheet-panel {
-            animation: fadeIn 0.35s ease;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(12px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Waslny – تطبيق العميل</title>
+  <script src="/config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script defer src="/assets/js/ui.js"></script>
+  <script defer src="/assets/js/map.js"></script>
+  <style>
+    body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f8fafc; }
+  </style>
 </head>
-<body class="overflow-hidden">
-    <div id="toast" class="fixed top-6 inset-x-0 flex justify-center pointer-events-none z-50 hidden">
-        <div class="bg-red-500 text-white px-4 py-2 rounded-full shadow-lg text-sm" id="toast-message"></div>
+<body class="bg-slate-100 min-h-screen">
+  <div id="auth-guard" class="min-h-screen flex items-center justify-center px-4 hidden">
+    <div class="bg-white rounded-3xl shadow-2xl px-6 py-8 max-w-md text-center space-y-4">
+      <div class="flex flex-col items-center gap-2 text-blue-600">
+        <i class="ph ph-lock text-4xl"></i>
+        <h1 class="text-2xl font-semibold text-slate-800">تحتاج لتسجيل الدخول</h1>
+      </div>
+      <p class="text-sm text-slate-500 leading-6">
+        سجّل من صفحة الهبوط للمتابعة، أو استخدم تسجيلًا تجريبيًا سريعًا أثناء التطوير.
+      </p>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <button id="guard-mock-btn" class="flex-1 inline-flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold py-3 rounded-2xl hover:bg-blue-700 transition">
+          <i class="ph ph-flask"></i>
+          <span>Mock Login</span>
+        </button>
+        <button id="guard-back-btn" class="flex-1 inline-flex items-center justify-center gap-2 bg-slate-100 text-slate-600 font-semibold py-3 rounded-2xl hover:bg-slate-200 transition">
+          <i class="ph ph-arrow-u-up-left"></i>
+          <span>العودة للتسجيل</span>
+        </button>
+      </div>
     </div>
+  </div>
 
-    <!-- Main App Container -->
-    <div id="app-container" class="hidden h-screen w-screen relative overflow-hidden">
-        <div id="map" class="relative"></div>
+  <div id="app" class="hidden min-h-screen flex flex-col">
+    <header class="bg-white shadow-sm border-b border-slate-100">
+      <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-400">مرحبًا بك في</p>
+          <h1 class="text-xl font-semibold text-slate-800">Waslny – طلب مندوب محلي</h1>
+        </div>
+        <button id="logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
+          <i class="ph ph-sign-out"></i>
+          <span>تسجيل الخروج</span>
+        </button>
+      </div>
+    </header>
 
-        <!-- Center Marker -->
-        <div id="center-marker" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full z-30 pointer-events-none transition">
-            <div class="flex flex-col items-center gap-2">
-                <span id="marker-label" class="bg-slate-900 text-white text-xs px-3 py-1 rounded-full shadow">حدد نقطة الاستلام</span>
-                <i class="ph-fill ph-map-pin text-5xl text-blue-600 drop-shadow"></i>
+    <main class="flex-1 w-full max-w-6xl mx-auto px-4 py-6 flex flex-col lg:flex-row gap-6">
+      <section class="flex-1">
+        <div id="map" class="w-full h-[360px] md:h-[520px] lg:h-[560px] rounded-3xl overflow-hidden shadow bg-slate-200"></div>
+        <p class="mt-3 text-xs text-slate-400">
+          تلميح: أثناء الاختبار يمكنك النقر على الخريطة لاختيار نقاط الاستلام والتسليم بسرعة.
+        </p>
+      </section>
+
+      <section class="w-full lg:w-[360px] space-y-4 pb-8">
+        <div class="bg-white rounded-3xl shadow px-6 py-6 space-y-5">
+          <div class="space-y-1">
+            <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <i class="ph ph-navigation-arrow text-blue-600 text-xl"></i>
+              طلب توصيل جديد
+            </h2>
+            <p class="text-sm text-slate-500">أدخل المواقع ثم اعرض المسار والسعر المبدئي.</p>
+          </div>
+          <div class="space-y-4">
+            <div class="space-y-2">
+              <label class="text-xs font-semibold text-slate-500">مكان الالتقاط</label>
+              <input id="pickup-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: مدينة نصر، القاهرة" />
             </div>
+            <div class="space-y-2">
+              <label class="text-xs font-semibold text-slate-500">مكان التسليم</label>
+              <input id="dropoff-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: المعادي، القاهرة" />
+            </div>
+          </div>
+          <button id="route-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
+            <i class="ph ph-map-trifold text-lg"></i>
+            <span>عرض المسار</span>
+          </button>
         </div>
 
-        <!-- Header Buttons -->
-        <div class="absolute top-5 left-5 z-40 flex flex-col gap-3">
-            <button id="logout-btn" title="تسجيل الخروج" class="w-12 h-12 rounded-full bg-white shadow flex items-center justify-center text-slate-500 hover:text-red-500 transition">
-                <i class="ph ph-sign-out text-2xl"></i>
+        <div id="pricing-card" class="hidden bg-white rounded-3xl shadow px-6 py-6 space-y-5">
+          <div class="space-y-1">
+            <h3 class="text-lg font-semibold text-slate-800">التسعير المبدئي</h3>
+            <p class="text-xs text-slate-400">السعر النهائي يُحسب عند إنشاء الطلب على الخادم.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3 text-sm text-slate-600">
+            <div class="bg-slate-50 rounded-2xl p-3">
+              <p class="text-xs text-slate-400 mb-1">المسافة التقديرية</p>
+              <p id="distance-label" class="text-base font-semibold text-slate-800">-</p>
+            </div>
+            <div class="bg-slate-50 rounded-2xl p-3">
+              <p class="text-xs text-slate-400 mb-1">الوقت المتوقع</p>
+              <p id="duration-label" class="text-base font-semibold text-slate-800">-</p>
+            </div>
+            <div class="bg-slate-50 rounded-2xl p-3 col-span-2">
+              <p class="text-xs text-slate-400 mb-1">السعر التقديري</p>
+              <p id="price-label" class="text-2xl font-bold text-blue-600">-</p>
+            </div>
+          </div>
+          <div class="space-y-1 text-xs text-slate-500">
+            <p id="pickup-label">لم يتم تحديد موقع الاستلام بعد.</p>
+            <p id="dropoff-label">لم يتم تحديد موقع التسليم بعد.</p>
+          </div>
+          <button id="confirm-btn" class="w-full inline-flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-2xl py-3 transition">
+            <i class="ph ph-paper-plane-tilt text-lg"></i>
+            <span>تأكيد الطلب</span>
+          </button>
+        </div>
+
+        <div id="order-card" class="hidden bg-white rounded-3xl shadow px-6 py-6 space-y-5">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-lg font-semibold text-slate-800">متابعة الطلب</h3>
+              <p class="text-xs text-slate-400">يتم تحديث الحالة لحظيًا.</p>
+            </div>
+            <span id="order-status-pill" class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">-</span>
+          </div>
+          <div class="space-y-3 text-sm text-slate-600">
+            <div class="flex items-center gap-3 bg-slate-50 rounded-2xl p-3">
+              <i class="ph ph-steering-wheel text-xl text-blue-600"></i>
+              <div>
+                <p id="driver-name" class="font-semibold text-slate-800">بانتظار المندوب</p>
+                <p id="driver-vehicle" class="text-xs text-slate-400">ستظهر التفاصيل فور التعيين</p>
+              </div>
+            </div>
+            <div class="bg-slate-50 rounded-2xl p-3">
+              <p class="text-xs text-slate-400 mb-1">وسيلة التواصل</p>
+              <p id="driver-phone" class="font-mono text-sm text-slate-700">-</p>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <button id="cancel-btn" class="w-full inline-flex items-center justify-center gap-2 bg-rose-100 text-rose-600 font-semibold rounded-2xl py-3 transition hover:bg-rose-200">
+              <i class="ph ph-x-circle text-lg"></i>
+              <span>إلغاء الطلب</span>
             </button>
+            <button id="new-order-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold rounded-2xl py-3 transition hover:bg-blue-700">
+              <i class="ph ph-plus text-lg"></i>
+              <span>طلب جديد</span>
+            </button>
+          </div>
         </div>
+      </section>
+    </main>
+  </div>
 
-        <!-- Bottom Sheet -->
-        <div id="bottom-sheet" class="bottom-sheet absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl p-4 z-40 transform translate-y-full">
-            <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4"></div>
-            <div id="sheet-content" class="max-h-[70vh] overflow-y-auto space-y-5">
-                <div id="state-create-order" class="sheet-panel space-y-4">
-                    <div class="text-center space-y-1">
-                        <h2 class="text-xl font-semibold text-slate-800">إلى أين تود الإرسال اليوم؟</h2>
-                        <p class="text-sm text-slate-500">حرك الخريطة لتحديد نقطتي الاستلام والتسليم</p>
-                    </div>
-                    <div class="space-y-3">
-                        <div class="space-y-2">
-                            <span class="text-xs text-slate-500">ابحث عن موقع الاستلام</span>
-                            <input id="pickup-search" type="text" placeholder="اكتب عنوان الاستلام"
-                                   class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-left" />
-                        </div>
-                        <div class="space-y-2">
-                            <span class="text-xs text-slate-500">ابحث عن موقع التسليم</span>
-                            <input id="dropoff-search" type="text" placeholder="اكتب عنوان التسليم"
-                                   class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 text-left" disabled />
-                        </div>
-                    </div>
-                    <div class="space-y-2">
-                        <div class="flex items-center gap-3 bg-slate-100 rounded-xl px-3 py-2">
-                            <i class="ph ph-dot-outline text-blue-600 text-xl"></i>
-                            <span id="pickup-address" class="text-sm text-slate-700">لم يتم تحديد نقطة الاستلام</span>
-                        </div>
-                        <div class="flex items-center gap-3 bg-slate-100 rounded-xl px-3 py-2">
-                            <i class="ph ph-map-pin text-emerald-500 text-xl"></i>
-                            <span id="dropoff-address" class="text-sm text-slate-700">لم يتم تحديد نقطة التسليم</span>
-                        </div>
-                    </div>
-                    <button id="confirm-locations-btn" disabled class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl disabled:bg-slate-300 disabled:cursor-not-allowed">تأكيد الموقع الحالي</button>
-                </div>
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const config = window.__APP_CONFIG__ || {};
+      const authToken = localStorage.getItem('authToken');
+      const guard = document.getElementById('auth-guard');
+      const app = document.getElementById('app');
+      const guardMockBtn = document.getElementById('guard-mock-btn');
+      const guardBackBtn = document.getElementById('guard-back-btn');
+      const logoutBtn = document.getElementById('logout-btn');
 
-                <div id="state-confirm-trip" class="sheet-panel hidden space-y-4">
-                    <div class="text-center space-y-1">
-                        <h2 class="text-xl font-semibold text-slate-800">تأكيد تفاصيل الرحلة</h2>
-                        <p class="text-sm text-slate-500">تحقق من التفاصيل قبل إرسال الطلب</p>
-                    </div>
-                    <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4 space-y-3">
-                        <div class="flex justify-between text-sm text-slate-600">
-                            <span>المسافة</span>
-                            <span id="distance-text" class="font-semibold text-slate-800"></span>
-                        </div>
-                        <div class="flex justify-between text-sm text-slate-600">
-                            <span>الوقت المقدر</span>
-                            <span id="duration-text" class="font-semibold text-slate-800">-</span>
-                        </div>
-                        <div class="flex justify-between text-sm text-slate-600">
-                            <span>السعر التقديري</span>
-                            <span id="price-text" class="font-semibold text-blue-600"></span>
-                        </div>
-                    </div>
-                    <button id="request-driver-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl flex items-center justify-center gap-2"><i class="ph ph-paper-plane-tilt text-lg"></i><span>طلب مندوب</span></button>
-                    <button id="back-to-locations-btn" class="w-full text-center text-sm text-slate-500">تعديل المواقع</button>
-                </div>
+      const pickupInput = document.getElementById('pickup-input');
+      const dropoffInput = document.getElementById('dropoff-input');
+      const routeBtn = document.getElementById('route-btn');
+      const pricingCard = document.getElementById('pricing-card');
+      const distanceLabel = document.getElementById('distance-label');
+      const durationLabel = document.getElementById('duration-label');
+      const priceLabel = document.getElementById('price-label');
+      const pickupLabel = document.getElementById('pickup-label');
+      const dropoffLabel = document.getElementById('dropoff-label');
+      const confirmBtn = document.getElementById('confirm-btn');
 
-                <div id="state-searching" class="sheet-panel hidden text-center space-y-3 py-6">
-                    <div class="mx-auto w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
-                    <h3 class="text-lg font-semibold text-slate-700">جاري البحث عن أقرب مندوب متاح...</h3>
-                    <p class="text-sm text-slate-500">عادةً ما يتم العثور على مندوب خلال لحظات قليلة.</p>
-                    <button id="cancel-search-btn" class="text-sm text-red-500 font-semibold">إلغاء الطلب</button>
-                </div>
+      const orderCard = document.getElementById('order-card');
+      const orderStatusPill = document.getElementById('order-status-pill');
+      const driverNameEl = document.getElementById('driver-name');
+      const driverVehicleEl = document.getElementById('driver-vehicle');
+      const driverPhoneEl = document.getElementById('driver-phone');
+      const cancelBtn = document.getElementById('cancel-btn');
+      const newOrderBtn = document.getElementById('new-order-btn');
 
-                <div id="state-en-route" class="sheet-panel hidden space-y-4">
-                    <div class="flex items-center gap-3 bg-slate-100 rounded-2xl p-3">
-                        <div class="w-14 h-14 rounded-full bg-white shadow flex items-center justify-center">
-                            <i class="ph ph-steering-wheel text-2xl text-blue-600"></i>
-                        </div>
-                        <div>
-                            <p id="driver-name" class="text-lg font-semibold text-slate-800">-</p>
-                            <p id="driver-vehicle" class="text-sm text-slate-500">-</p>
-                            <p id="driver-contact" class="text-xs text-slate-400">رقم التواصل: <span id="driver-phone"></span></p>
-                        </div>
-                        <div class="ms-auto">
-                            <span id="order-status" class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">في الطريق</span>
-                        </div>
-                    </div>
-                    <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center space-y-1">
-                        <p class="text-sm text-slate-600">الوقت المتوقع للوصول</p>
-                        <p id="driver-eta" class="text-lg font-semibold text-blue-600">-</p>
-                    </div>
-                </div>
+      guardMockBtn.addEventListener('click', () => {
+        localStorage.setItem('authToken', 'dev-token');
+        window.location.reload();
+      });
+      guardBackBtn.addEventListener('click', () => {
+        window.location.href = '/index.html';
+      });
 
-                <div id="state-delivered" class="sheet-panel hidden text-center space-y-3 py-8">
-                    <i class="ph-fill ph-check-circle text-5xl text-emerald-500 mx-auto"></i>
-                    <h2 class="text-xl font-semibold text-slate-800">تم توصيل طلبك بنجاح!</h2>
-                    <p class="text-sm text-slate-500">نأمل أن تكون تجربتك مع وصلني مميزة.</p>
-                    <button id="new-order-btn" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl">طلب جديد</button>
-                </div>
-            </div>
-        </div>
-    </div>
+      if (!authToken) {
+        guard.classList.remove('hidden');
+        return;
+      }
+      guard.classList.add('hidden');
+      app.classList.remove('hidden');
 
-<script>
-    document.addEventListener('DOMContentLoaded', () => {
-        const { API_BASE_URL, NOMINATIM_URL, OSM_ROUTING_URL } = window.__APP_CONFIG__ || {};
-        const authToken = window.__AUTH_TOKEN__ || '';
-        if (!authToken) {
-            window.location.replace('/');
-            return;
+      logoutBtn.addEventListener('click', () => {
+        localStorage.removeItem('authToken');
+        window.location.href = '/index.html';
+      });
+
+      const map = await window.MapKit.initMap('map', [30.0444, 31.2357], 12);
+
+      let pickupPoint = null;
+      let dropoffPoint = null;
+      let pickupMarker = null;
+      let dropoffMarker = null;
+      let driverMarker = null;
+      let driverTrail = null;
+      let lastDriverLatLng = null;
+      let currentRouteControl = null;
+      let quotedTrip = null;
+      let currentOrder = null;
+      let socket = null;
+
+      const statusLabels = {
+        CREATED: 'تم إنشاء الطلب',
+        SEARCHING_DRIVER: 'جارٍ البحث عن أقرب مندوب',
+        DRIVER_ASSIGNED: 'تم تعيين مندوب',
+        DRIVER_ARRIVED_PICKUP: 'المندوب وصل لنقطة الاستلام',
+        PICKED_UP: 'تم استلام الشحنة',
+        IN_TRANSIT: 'الشحنة في الطريق',
+        ARRIVED_DROPOFF: 'المندوب وصل للتسليم',
+        DELIVERED: 'تم التسليم بنجاح',
+        CANCELLED: 'تم إلغاء الطلب'
+      };
+
+      const statusClasses = {
+        DELIVERED: 'bg-emerald-100 text-emerald-600',
+        CANCELLED: 'bg-rose-100 text-rose-600',
+        DRIVER_ASSIGNED: 'bg-blue-100 text-blue-600',
+        IN_TRANSIT: 'bg-blue-100 text-blue-600',
+        default: 'bg-amber-100 text-amber-600'
+      };
+
+      function formatCoords(point) {
+        return `(${Number(point.lat).toFixed(5)}, ${Number(point.lng).toFixed(5)})`;
+      }
+
+      function resetDriverTracking() {
+        if (driverMarker) {
+          map.removeLayer(driverMarker);
+          driverMarker = null;
+        }
+        if (driverTrail) {
+          map.removeLayer(driverTrail);
+          driverTrail = null;
+        }
+        lastDriverLatLng = null;
+      }
+
+      function updateMarkers() {
+        if (pickupPoint) {
+          if (!pickupMarker) {
+            pickupMarker = window.MapKit.addMarker(map, { lat: pickupPoint.lat, lng: pickupPoint.lng, label: 'الاستلام' });
+          } else {
+            pickupMarker.setLatLng([pickupPoint.lat, pickupPoint.lng]);
+          }
+        }
+        if (dropoffPoint) {
+          if (!dropoffMarker) {
+            dropoffMarker = window.MapKit.addMarker(map, { lat: dropoffPoint.lat, lng: dropoffPoint.lng, label: 'التسليم' });
+          } else {
+            dropoffMarker.setLatLng([dropoffPoint.lat, dropoffPoint.lng]);
+          }
+        }
+        window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
+      }
+
+      function resetPricingCard() {
+        quotedTrip = null;
+        pricingCard.classList.add('hidden');
+        distanceLabel.textContent = '-';
+        durationLabel.textContent = '-';
+        priceLabel.textContent = '-';
+        pickupLabel.textContent = 'لم يتم تحديد موقع الاستلام بعد.';
+        dropoffLabel.textContent = 'لم يتم تحديد موقع التسليم بعد.';
+        confirmBtn.disabled = false;
+        confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+      }
+
+      function resetRoute() {
+        if (currentRouteControl) {
+          map.removeControl(currentRouteControl);
+          currentRouteControl = null;
+        }
+      }
+
+      function resetAll() {
+        resetRoute();
+        resetPricingCard();
+        resetDriverTracking();
+        if (pickupMarker) {
+          map.removeLayer(pickupMarker);
+          pickupMarker = null;
+        }
+        if (dropoffMarker) {
+          map.removeLayer(dropoffMarker);
+          dropoffMarker = null;
+        }
+        pickupPoint = null;
+        dropoffPoint = null;
+        pickupInput.value = '';
+        dropoffInput.value = '';
+        orderCard.classList.add('hidden');
+        cancelBtn.classList.add('hidden');
+        newOrderBtn.classList.add('hidden');
+        currentOrder = null;
+      }
+
+      function updateOrderUI(order) {
+        if (!order) {
+          orderCard.classList.add('hidden');
+          cancelBtn.classList.add('hidden');
+          newOrderBtn.classList.add('hidden');
+          return;
+        }
+        orderCard.classList.remove('hidden');
+        const status = order.status;
+        orderStatusPill.textContent = statusLabels[status] || status;
+        const statusClass = statusClasses[status] || statusClasses.default;
+        orderStatusPill.className = `inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full ${statusClass}`;
+
+        if (order.driver) {
+          driverNameEl.textContent = order.driver.name || 'مندوب معتمد';
+          const vehicleDetails = [order.driver.vehicleType, order.driver.licensePlate]
+            .filter(Boolean)
+            .join(' • ');
+          driverVehicleEl.textContent = vehicleDetails || 'تفاصيل المركبة غير متاحة';
+          driverPhoneEl.textContent = order.driver.phoneNumber || '-';
+        } else {
+          driverNameEl.textContent = 'جارٍ البحث عن أقرب مندوب متاح';
+          driverVehicleEl.textContent = 'ستظهر التفاصيل فور التعيين';
+          driverPhoneEl.textContent = '-';
         }
 
-        const appContainer = document.getElementById('app-container');
-        const toast = document.getElementById('toast');
-        const toastMessage = document.getElementById('toast-message');
-        const logoutBtn = document.getElementById('logout-btn');
-        const bottomSheet = document.getElementById('bottom-sheet');
-        const centerMarker = document.getElementById('center-marker');
-        const markerLabel = document.getElementById('marker-label');
-        const confirmLocationsBtn = document.getElementById('confirm-locations-btn');
-        const requestDriverBtn = document.getElementById('request-driver-btn');
-        const cancelSearchBtn = document.getElementById('cancel-search-btn');
-        const newOrderBtn = document.getElementById('new-order-btn');
-        const backToLocationsBtn = document.getElementById('back-to-locations-btn');
+        const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
+        cancelBtn.classList.toggle('hidden', isFinished);
+        newOrderBtn.classList.toggle('hidden', !isFinished);
 
-        const pickupAddressEl = document.getElementById('pickup-address');
-        const dropoffAddressEl = document.getElementById('dropoff-address');
-        const distanceTextEl = document.getElementById('distance-text');
-        const durationTextEl = document.getElementById('duration-text');
-        const priceTextEl = document.getElementById('price-text');
-        const pickupSearchInput = document.getElementById('pickup-search');
-        const dropoffSearchInput = document.getElementById('dropoff-search');
+        if (status === 'DELIVERED') {
+          window.UI?.showToast('تم تسليم الطلب بنجاح، شكراً لاستخدامك وصلني!', 'success');
+        }
+        if (status === 'CANCELLED' && order.reason === 'NO_DRIVER') {
+          window.UI?.showToast('لم يتم العثور على مندوب في النطاق المحدد حالياً.', 'warning');
+          resetDriverTracking();
+        }
 
-        const driverNameEl = document.getElementById('driver-name');
-        const driverVehicleEl = document.getElementById('driver-vehicle');
-        const driverPhoneEl = document.getElementById('driver-phone');
-        const orderStatusEl = document.getElementById('order-status');
-        const driverEtaEl = document.getElementById('driver-eta');
+        window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
+      }
 
-        const stateViews = {
-            create: document.getElementById('state-create-order'),
-            confirm: document.getElementById('state-confirm-trip'),
-            searching: document.getElementById('state-searching'),
-            enRoute: document.getElementById('state-en-route'),
-            delivered: document.getElementById('state-delivered')
+      function calculatePrice(distanceKm) {
+        return Number((20 + distanceKm * 4).toFixed(2));
+      }
+
+      async function geocode(query) {
+        const trimmed = query.trim();
+        if (!trimmed) {
+          throw new Error('الرجاء إدخال موقع صالح.');
+        }
+        const parts = trimmed.split(',');
+        if (parts.length === 2) {
+          const lat = Number(parts[0]);
+          const lng = Number(parts[1]);
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return { lat, lng, label: formatCoords({ lat, lng }) };
+          }
+        }
+        const base = (config.NOMINATIM_URL || 'https://nominatim.openstreetmap.org').replace(/\/$/, '');
+        const url = `${base}/search?format=json&limit=1&q=${encodeURIComponent(trimmed)}`;
+        const response = await fetch(url, {
+          headers: {
+            'Accept-Language': 'ar',
+            'User-Agent': 'Waslny MVP (learning project)'
+          }
+        });
+        if (!response.ok) {
+          throw new Error('تعذر الاتصال بخدمة تحديد المواقع.');
+        }
+        const data = await response.json();
+        if (!Array.isArray(data) || !data.length) {
+          throw new Error('لم يتم العثور على الموقع المدخل.');
+        }
+        return {
+          lat: Number(data[0].lat),
+          lng: Number(data[0].lon),
+          label: data[0].display_name
         };
+      }
 
-        let socket = null;
-        let map;
-        let mapReady = false;
-        let pickupCoords = null;
-        let dropoffCoords = null;
-        let pickupMarker = null;
-        let dropoffMarker = null;
-        let driverMarker = null;
-        let driverTrail = null;
-        let driverTrailCoords = [];
-        let routingControl = null;
-        let quoteData = null;
-        let activeOrderId = null;
-        let activeOrderData = null;
-        let appState = 'SETTING_PICKUP';
-
-        const geocodingBaseUrl = (NOMINATIM_URL || 'https://nominatim.openstreetmap.org').replace(/\/$/, '');
-        const routingBaseUrl = (OSM_ROUTING_URL || 'https://router.project-osrm.org/route/v1').replace(/\/$/, '');
-
-        function showToast(message, isError = true) {
-            toastMessage.textContent = message;
-            toast.classList.remove('hidden');
-            toastMessage.className = `px-4 py-2 rounded-full shadow-lg text-sm ${isError ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`;
-            toast.classList.remove('opacity-0');
-            setTimeout(() => toast.classList.add('opacity-0'), 50);
-            setTimeout(() => toast.classList.add('hidden'), 3200);
+      async function drawRoute() {
+        if (!pickupPoint || !dropoffPoint) {
+          return;
         }
-
-        function switchSheetState(key) {
-            Object.values(stateViews).forEach((panel) => panel.classList.add('hidden'));
-            if (stateViews[key]) {
-                stateViews[key].classList.remove('hidden');
-            }
+        try {
+          window.UI?.setLoading(routeBtn, true, 'جاري حساب المسار...');
+          const result = await window.MapKit.routeAndEta(map, pickupPoint, dropoffPoint);
+          currentRouteControl = result.control;
+          const price = calculatePrice(result.km);
+          quotedTrip = {
+            pickup: pickupPoint,
+            dropoff: dropoffPoint,
+            km: result.km,
+            minutes: result.minutes,
+            price,
+            pickupLabel: pickupLabel.textContent,
+            dropoffLabel: dropoffLabel.textContent
+          };
+          distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
+          durationLabel.textContent = `${result.minutes} دقيقة`;
+          priceLabel.textContent = `${price.toFixed(2)} ر.س`;
+          pricingCard.classList.remove('hidden');
+          window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker]);
+        } catch (error) {
+          resetRoute();
+          window.UI?.showToast(error.message || 'تعذر رسم المسار. حاول مرة أخرى.', 'error');
+        } finally {
+          window.UI?.setLoading(routeBtn, false, 'عرض المسار');
         }
+      }
 
-        function buildMarkerIcon(color, emoji = '') {
-            return L.divIcon({
-                className: 'custom-div-icon',
-                html: `<div style="background:${color};border-radius:50%;width:28px;height:28px;border:3px solid #fff;box-shadow:0 4px 12px rgba(15,23,42,0.35);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;">${emoji}</div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 28]
-            });
+      routeBtn.addEventListener('click', async () => {
+        try {
+          resetRoute();
+          resetDriverTracking();
+          const [pickupResult, dropoffResult] = await Promise.all([
+            geocode(pickupInput.value),
+            geocode(dropoffInput.value)
+          ]);
+          pickupPoint = { lat: pickupResult.lat, lng: pickupResult.lng };
+          dropoffPoint = { lat: dropoffResult.lat, lng: dropoffResult.lng };
+          pickupLabel.textContent = `الاستلام: ${pickupResult.label}`;
+          dropoffLabel.textContent = `التسليم: ${dropoffResult.label}`;
+          updateMarkers();
+          await drawRoute();
+        } catch (error) {
+          window.UI?.showToast(error.message || 'تحقق من المواقع المدخلة.', 'error');
         }
+      });
 
-        function resetMapArtifacts() {
-            if (!mapReady) return;
-            if (pickupMarker) {
-                map.removeLayer(pickupMarker);
-                pickupMarker = null;
-            }
-            if (dropoffMarker) {
-                map.removeLayer(dropoffMarker);
-                dropoffMarker = null;
-            }
-            if (driverMarker) {
-                map.removeLayer(driverMarker);
-                driverMarker = null;
-            }
-            if (routingControl) {
-                routingControl.setWaypoints([]);
-                map.removeControl(routingControl);
-                routingControl = null;
-            }
-            driverTrailCoords = [];
-            if (driverTrail) {
-                driverTrail.setLatLngs([]);
-            }
+      confirmBtn.addEventListener('click', async () => {
+        if (!quotedTrip) {
+          window.UI?.showToast('الرجاء حساب المسار أولاً.', 'warning');
+          return;
         }
-
-        function fitMapToImportantPoints() {
-            if (!mapReady) return;
-            const points = [];
-            if (pickupCoords) points.push([pickupCoords.lat, pickupCoords.lng]);
-            if (dropoffCoords) points.push([dropoffCoords.lat, dropoffCoords.lng]);
-            if (driverMarker) {
-                const latLng = driverMarker.getLatLng();
-                points.push([latLng.lat, latLng.lng]);
-            }
-            if (points.length) {
-                map.fitBounds(points, { padding: [80, 80] });
-            }
+        try {
+          window.UI?.setLoading(confirmBtn, true, 'جارٍ إرسال الطلب...');
+          const response = await fetch(`${config.API_BASE_URL}/api/orders`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ pickup: quotedTrip.pickup, dropoff: quotedTrip.dropoff })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || data?.error || 'تعذر إنشاء الطلب.');
+          }
+          currentOrder = data;
+          confirmBtn.disabled = true;
+          confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
+          window.UI?.showToast('تم إرسال الطلب، نبحث عن أقرب مندوب...', 'success');
+          subscribeToOrder(data.id);
+          updateOrderUI(data);
+        } catch (error) {
+          window.UI?.showToast(error.message || 'حدث خلل أثناء إنشاء الطلب.', 'error');
+        } finally {
+          window.UI?.setLoading(confirmBtn, false, 'تأكيد الطلب');
         }
+      });
 
-        function initMap() {
-            if (mapReady) return;
-            map = L.map('map', {
-                center: [24.7136, 46.6753],
-                zoom: 14,
-                zoomControl: false,
-                attributionControl: false
-            });
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-                attribution: '&copy; OpenStreetMap contributors'
-            }).addTo(map);
-            driverTrail = L.polyline([], { color: '#f97316', weight: 4, opacity: 0.8 }).addTo(map);
-            mapReady = true;
-
-            map.on('movestart', () => {
-                confirmLocationsBtn.disabled = false;
-                centerMarker.classList.add('-translate-y-[55%]');
-            });
-            map.on('moveend', () => {
-                centerMarker.classList.remove('-translate-y-[55%]');
-            });
-            map.on('click', (event) => {
-                const { lat, lng } = event.latlng || {};
-                if (!lat && lat !== 0) return;
-                if (!pickupCoords) {
-                    setPickup({ lat, lng });
-                    appState = 'SETTING_DROPOFF';
-                    markerLabel.textContent = 'حدد نقطة التسليم';
-                    confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
-                    confirmLocationsBtn.disabled = true;
-                    dropoffSearchInput.disabled = false;
-                    dropoffSearchInput.focus();
-                } else if (!dropoffCoords) {
-                    setDropoff({ lat, lng });
-                    finishLocationSelection();
-                }
-            });
-
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition((pos) => {
-                    const ll = [pos.coords.latitude, pos.coords.longitude];
-                    map.setView(ll, 15);
-                });
-            }
-
-            setTimeout(() => bottomSheet.classList.remove('translate-y-full'), 200);
-        }
-
-        function setPickup(coords) {
-            pickupCoords = { lat: Number(coords.lat), lng: Number(coords.lng) };
-            if (!pickupMarker) {
-                pickupMarker = L.marker([pickupCoords.lat, pickupCoords.lng], {
-                    draggable: true,
-                    icon: buildMarkerIcon('#2563eb', 'A')
-                }).addTo(map);
-                pickupMarker.on('dragend', (event) => {
-                    const { lat, lng } = event.target.getLatLng();
-                    pickupCoords = { lat, lng };
-                    geocodeLatLng(pickupCoords, pickupAddressEl);
-                    renderRoute();
-                    requestQuote();
-                });
-            } else {
-                pickupMarker.setLatLng([pickupCoords.lat, pickupCoords.lng]);
-            }
-            geocodeLatLng(pickupCoords, pickupAddressEl);
-        }
-
-        function setDropoff(coords) {
-            dropoffCoords = { lat: Number(coords.lat), lng: Number(coords.lng) };
-            if (!dropoffMarker) {
-                dropoffMarker = L.marker([dropoffCoords.lat, dropoffCoords.lng], {
-                    draggable: true,
-                    icon: buildMarkerIcon('#22c55e', 'B')
-                }).addTo(map);
-                dropoffMarker.on('dragend', (event) => {
-                    const { lat, lng } = event.target.getLatLng();
-                    dropoffCoords = { lat, lng };
-                    geocodeLatLng(dropoffCoords, dropoffAddressEl);
-                    renderRoute();
-                    requestQuote();
-                });
-            } else {
-                dropoffMarker.setLatLng([dropoffCoords.lat, dropoffCoords.lng]);
-            }
-            geocodeLatLng(dropoffCoords, dropoffAddressEl);
-        }
-
-        async function geocodeLatLng(coords, targetEl) {
-            if (!coords || !targetEl) return;
+      cancelBtn.addEventListener('click', () => {
+        if (!currentOrder) return;
+        window.UI?.showModal({
+          title: 'تأكيد إلغاء الطلب',
+          message: 'هل أنت متأكد من رغبتك في إلغاء الطلب الحالي؟',
+          confirmText: 'نعم، إلغاء',
+          cancelText: 'تراجع',
+          onConfirm: async () => {
             try {
-                const url = `${geocodingBaseUrl}/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=0`;
-                const response = await fetch(url, {
-                    headers: { 'Accept': 'application/json', 'User-Agent': 'waslny-mvp/1.0' }
-                });
-                const data = await response.json();
-                if (data?.display_name) {
-                    targetEl.textContent = data.display_name;
-                } else {
-                    targetEl.textContent = `(${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`;
+              const response = await fetch(`${config.API_BASE_URL}/api/orders/${currentOrder.id}/cancel`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${authToken}`
                 }
+              });
+              const data = await response.json();
+              if (!response.ok) {
+                throw new Error(data?.message || data?.error || 'تعذر إلغاء الطلب.');
+              }
+              window.UI?.showToast('تم إلغاء الطلب بنجاح.', 'info');
             } catch (error) {
-                targetEl.textContent = `(${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`;
+              window.UI?.showToast(error.message || 'تعذر إلغاء الطلب.', 'error');
             }
-        }
-
-        async function geocodeSearch(query) {
-            if (!query) return null;
-            try {
-                const url = `${geocodingBaseUrl}/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
-                const response = await fetch(url, {
-                    headers: { 'Accept': 'application/json', 'User-Agent': 'waslny-mvp/1.0' }
-                });
-                const results = await response.json();
-                if (!results?.length) return null;
-                return {
-                    lat: Number(results[0].lat),
-                    lng: Number(results[0].lon),
-                    label: results[0].display_name
-                };
-            } catch (error) {
-                return null;
-            }
-        }
-
-        function renderRoute() {
-            if (!pickupCoords || !dropoffCoords || !mapReady) return;
-            const waypoints = [
-                L.latLng(pickupCoords.lat, pickupCoords.lng),
-                L.latLng(dropoffCoords.lat, dropoffCoords.lng)
-            ];
-            if (!routingControl) {
-                routingControl = L.Routing.control({
-                    waypoints,
-                    router: L.Routing.osrmv1({ serviceUrl: routingBaseUrl }),
-                    show: false,
-                    addWaypoints: false,
-                    draggableWaypoints: false,
-                    fitSelectedRoutes: true,
-                    lineOptions: { styles: [{ color: '#2563eb', weight: 6 }] }
-                }).on('routesfound', (event) => {
-                    const route = event.routes?.[0];
-                    if (!route) return;
-                    const km = route.summary.totalDistance / 1000;
-                    const minutes = route.summary.totalTime / 60;
-                    distanceTextEl.textContent = `${km.toFixed(2)} كم`;
-                    durationTextEl.textContent = `${Math.round(minutes)} دقيقة`;
-                    fitMapToImportantPoints();
-                }).addTo(map);
-            } else {
-                routingControl.setWaypoints(waypoints);
-            }
-        }
-
-        async function requestQuote() {
-            if (!pickupCoords || !dropoffCoords) return;
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/quote`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({ pickup: pickupCoords, dropoff: dropoffCoords })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data?.message || 'تعذر الحصول على التسعيرة.');
-                }
-                quoteData = data;
-                if (typeof data.distanceKm === 'number') {
-                    distanceTextEl.textContent = `${Number(data.distanceKm).toFixed(2)} كم`;
-                }
-                if (typeof data.durationMin === 'number') {
-                    durationTextEl.textContent = `${Math.round(Number(data.durationMin))} دقيقة`;
-                }
-                priceTextEl.textContent = `${Number(data.price).toFixed(2)} ر.س`;
-            } catch (error) {
-                showToast(error.message || 'حدث خطأ أثناء حساب التسعيرة.');
-            }
-        }
-
-        function haversineDistanceKm(a, b) {
-            const toRad = (v) => (v * Math.PI) / 180;
-            const R = 6371;
-            const dLat = toRad(b.lat - a.lat);
-            const dLng = toRad(b.lng - a.lng);
-            const lat1 = toRad(a.lat);
-            const lat2 = toRad(b.lat);
-            const sinLat = Math.sin(dLat / 2);
-            const sinLng = Math.sin(dLng / 2);
-            const c = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
-            const d = 2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c));
-            return R * d;
-        }
-
-        function computeEtaText(position, target) {
-            if (!position || !target) return '-';
-            const distanceKm = haversineDistanceKm(position, target);
-            if (!Number.isFinite(distanceKm) || distanceKm <= 0) return '-';
-            const minutes = Math.ceil((distanceKm / 40) * 60);
-            return `${minutes} دقيقة`;
-        }
-
-        function updateDriverMarker(position) {
-            if (!mapReady || !position) return;
-            const latLng = [Number(position.lat), Number(position.lng)];
-            if (!driverMarker) {
-                driverMarker = L.marker(latLng, { icon: buildMarkerIcon('#f97316', '🚗') }).addTo(map);
-            } else {
-                driverMarker.setLatLng(latLng);
-            }
-            driverTrailCoords.push(latLng);
-            if (driverTrailCoords.length > 60) {
-                driverTrailCoords.shift();
-            }
-            if (driverTrail) {
-                driverTrail.setLatLngs(driverTrailCoords);
-            }
-        }
-
-        function finishLocationSelection() {
-            centerMarker.classList.add('hidden');
-            appState = 'CONFIRMING';
-            renderRoute();
-            requestQuote();
-            switchSheetState('confirm');
-        }
-
-        function resetFlow(clearOrder = true) {
-            appState = 'SETTING_PICKUP';
-            pickupCoords = null;
-            dropoffCoords = null;
-            quoteData = null;
-            distanceTextEl.textContent = '';
-            durationTextEl.textContent = '-';
-            priceTextEl.textContent = '';
-            pickupAddressEl.textContent = 'لم يتم تحديد نقطة الاستلام';
-            dropoffAddressEl.textContent = 'لم يتم تحديد نقطة التسليم';
-            confirmLocationsBtn.disabled = true;
-            confirmLocationsBtn.textContent = 'تأكيد الموقع الحالي';
-            markerLabel.textContent = 'حدد نقطة الاستلام';
-            centerMarker.classList.remove('hidden');
-            if (pickupSearchInput) {
-                pickupSearchInput.value = '';
-            }
-            if (dropoffSearchInput) {
-                dropoffSearchInput.value = '';
-                dropoffSearchInput.disabled = true;
-            }
-            resetMapArtifacts();
-            switchSheetState('create');
-            if (mapReady) {
-                map.setView([24.7136, 46.6753], 14);
-            }
-            if (clearOrder) {
-                activeOrderId = null;
-                activeOrderData = null;
-            }
-        }
-
-        function ensureJoinedOrder(orderId) {
-            if (!orderId || !socket) return;
-            socket.emit('order:join', { orderId });
-        }
-
-        function updateDriverInfo(driver) {
-            if (!driver) return;
-            driverNameEl.textContent = driver.name || 'مندوب';
-            driverVehicleEl.textContent = driver.vehicleType ? `${driver.vehicleType} - ${driver.licensePlate || ''}` : '-';
-            driverPhoneEl.textContent = driver.phoneNumber || '-';
-        }
-
-        function handleOrderUpdate(order) {
-            if (!order) return;
-            if (!pickupCoords || !dropoffCoords) {
-                hydrateOrderOnMap(order);
-            }
-            if (order.reason === 'NO_DRIVER') {
-                showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول لاحقاً.', false);
-                resetFlow(true);
-                return;
-            }
-            const statusMessages = {
-                CREATED: 'تم إنشاء الطلب، نبحث عن أقرب مندوب...',
-                SEARCHING_DRIVER: 'جاري البحث عن مندوب...',
-                DRIVER_ASSIGNED: 'المندوب في الطريق لنقطة الاستلام',
-                DRIVER_ARRIVED_PICKUP: 'المندوب وصل لنقطة الاستلام',
-                PICKED_UP: 'تم الاستلام - في الطريق للتسليم',
-                IN_TRANSIT: 'المندوب في الطريق إلى نقطة التسليم',
-                ARRIVED_DROPOFF: 'المندوب وصل إلى نقطة التسليم',
-                DELIVERED: 'تم توصيل الطلب بنجاح',
-                CANCELLED: 'تم إلغاء الطلب'
-            };
-            if (statusMessages[order.status]) {
-                orderStatusEl.textContent = statusMessages[order.status];
-            }
-            switch (order.status) {
-                case 'CREATED':
-                case 'SEARCHING_DRIVER':
-                    switchSheetState('searching');
-                    break;
-                case 'DRIVER_ASSIGNED':
-                case 'DRIVER_ARRIVED_PICKUP':
-                case 'PICKED_UP':
-                case 'IN_TRANSIT':
-                case 'ARRIVED_DROPOFF':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('enRoute');
-                    break;
-                case 'DELIVERED':
-                    updateDriverInfo(order.driver);
-                    switchSheetState('delivered');
-                    break;
-                case 'CANCELLED':
-                    showToast('تم إلغاء الطلب.', false);
-                    resetFlow(true);
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        async function createOrder() {
-            if (!pickupCoords || !dropoffCoords) {
-                showToast('الرجاء تحديد نقاط الاستلام والتسليم.');
-                return;
-            }
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({ pickup: pickupCoords, dropoff: dropoffCoords })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data?.error || 'تعذر إنشاء الطلب.');
-                }
-                if (data.reason === 'NO_DRIVER') {
-                    showToast('لا يوجد مندوب متاح ضمن نطاق الخدمة حالياً. حاول مرة أخرى لاحقاً.', false);
-                    resetFlow(true);
-                    return;
-                }
-                activeOrderId = data.id;
-                activeOrderData = {
-                    ...data,
-                    pickup: { ...pickupCoords },
-                    dropoff: { ...dropoffCoords }
-                };
-                if (socket) {
-                    socket.emit('order:join', { orderId: activeOrderId });
-                }
-                switchSheetState('searching');
-            } catch (error) {
-                showToast(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
-            }
-        }
-
-        async function cancelOrder() {
-            if (!activeOrderId) {
-                resetFlow(true);
-                return;
-            }
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders/${activeOrderId}/cancel`, {
-                    method: 'POST',
-                    headers: { Authorization: `Bearer ${authToken}` }
-                });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data?.error || 'تعذر إلغاء الطلب.');
-                }
-                showToast('تم إلغاء الطلب.', false);
-                resetFlow(true);
-            } catch (error) {
-                showToast(error.message || 'تعذر إلغاء الطلب.');
-            }
-        }
-
-        async function fetchActiveOrder() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/orders/active`, {
-                    headers: { Authorization: `Bearer ${authToken}` }
-                });
-                if (!response.ok) return;
-                const data = await response.json();
-                if (data && data.id) {
-                    activeOrderId = data.id;
-                    activeOrderData = data;
-                    if (socket) {
-                        socket.emit('order:join', { orderId: data.id });
-                    }
-                    hydrateOrderOnMap(data);
-                    handleOrderUpdate(data);
-                } else {
-                    resetFlow(true);
-                }
-            } catch (error) {
-                console.error('Failed to fetch active order', error);
-            }
-        }
-
-        function hydrateOrderOnMap(order) {
-            if (!order) return;
-            pickupCoords = { lat: order.pickup.lat, lng: order.pickup.lng };
-            dropoffCoords = { lat: order.dropoff.lat, lng: order.dropoff.lng };
-            resetMapArtifacts();
-            setPickup(pickupCoords);
-            setDropoff(dropoffCoords);
-            centerMarker.classList.add('hidden');
-            renderRoute();
-            requestQuote();
-        }
-
-        function setupSearchInputs() {
-            if (pickupSearchInput) {
-                pickupSearchInput.addEventListener('keydown', async (event) => {
-                    if (event.key !== 'Enter') return;
-                    event.preventDefault();
-                    const query = (pickupSearchInput.value || '').trim();
-                    if (!query) return;
-                    const result = await geocodeSearch(query);
-                    if (!result) {
-                        showToast('تعذر العثور على العنوان المدخل.');
-                        return;
-                    }
-                    map.setView([result.lat, result.lng], 15);
-                    setPickup({ lat: result.lat, lng: result.lng });
-                    appState = 'SETTING_DROPOFF';
-                    markerLabel.textContent = 'حدد نقطة التسليم';
-                    confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
-                    confirmLocationsBtn.disabled = true;
-                    dropoffSearchInput.disabled = false;
-                    dropoffSearchInput.focus();
-                });
-            }
-            if (dropoffSearchInput) {
-                dropoffSearchInput.addEventListener('keydown', async (event) => {
-                    if (event.key !== 'Enter') return;
-                    event.preventDefault();
-                    const query = (dropoffSearchInput.value || '').trim();
-                    if (!query) return;
-                    const result = await geocodeSearch(query);
-                    if (!result) {
-                        showToast('تعذر العثور على العنوان المدخل.');
-                        return;
-                    }
-                    map.setView([result.lat, result.lng], 15);
-                    setDropoff({ lat: result.lat, lng: result.lng });
-                    finishLocationSelection();
-                });
-            }
-        }
-
-        function setupSocket() {
-            if (socket) {
-                socket.disconnect();
-            }
-            socket = io(API_BASE_URL, { auth: { token: authToken } });
-            socket.on('connect_error', (err) => {
-                console.error('Socket error', err.message);
-                showToast('فقد الاتصال بالخادم. جارٍ إعادة المحاولة...');
-            });
-            socket.on('order:created', (order) => {
-                if (!order) return;
-                activeOrderId = order.id;
-                activeOrderData = order;
-                ensureJoinedOrder(order.id);
-                handleOrderUpdate(order);
-            });
-            socket.on('order:driver_assigned', (order) => {
-                if (!order) return;
-                activeOrderId = order.id;
-                activeOrderData = order;
-                ensureJoinedOrder(order.id);
-                handleOrderUpdate(order);
-            });
-            socket.on('order:status', (order) => {
-                if (!order) return;
-                activeOrderId = order.id;
-                activeOrderData = order;
-                ensureJoinedOrder(order.id);
-                handleOrderUpdate(order);
-            });
-            socket.on('driver:location', (payload) => {
-                if (!payload || payload.orderId !== activeOrderId) return;
-                updateDriverMarker({ lat: payload.lat, lng: payload.lng });
-                if (activeOrderData) {
-                    if (['DRIVER_ASSIGNED', 'DRIVER_ARRIVED_PICKUP'].includes(activeOrderData.status)) {
-                        driverEtaEl.textContent = computeEtaText({ lat: payload.lat, lng: payload.lng }, activeOrderData.pickup);
-                    } else if (['PICKED_UP', 'IN_TRANSIT', 'ARRIVED_DROPOFF'].includes(activeOrderData.status)) {
-                        driverEtaEl.textContent = computeEtaText({ lat: payload.lat, lng: payload.lng }, activeOrderData.dropoff);
-                    }
-                }
-                fitMapToImportantPoints();
-            });
-        }
-
-        confirmLocationsBtn.addEventListener('click', () => {
-            if (!mapReady) return;
-            const center = map.getCenter();
-            if (appState === 'SETTING_PICKUP') {
-                setPickup({ lat: center.lat, lng: center.lng });
-                appState = 'SETTING_DROPOFF';
-                markerLabel.textContent = 'حدد نقطة التسليم';
-                confirmLocationsBtn.textContent = 'تأكيد نقطة التسليم';
-                confirmLocationsBtn.disabled = true;
-                dropoffSearchInput.disabled = false;
-                dropoffSearchInput.focus();
-            } else if (appState === 'SETTING_DROPOFF') {
-                setDropoff({ lat: center.lat, lng: center.lng });
-                finishLocationSelection();
-            }
+          }
         });
+      });
 
-        requestDriverBtn.addEventListener('click', createOrder);
-        cancelSearchBtn.addEventListener('click', cancelOrder);
-        newOrderBtn.addEventListener('click', () => resetFlow(true));
-        backToLocationsBtn.addEventListener('click', () => {
-            resetFlow(false);
-        });
+      newOrderBtn.addEventListener('click', () => {
+        resetAll();
+      });
 
-        logoutBtn.addEventListener('click', () => {
-            localStorage.removeItem('authToken');
-            if (socket) {
-                socket.disconnect();
-                socket = null;
-            }
-            resetFlow(true);
-            window.location.replace('/');
-        });
-
-        async function bootstrapApp() {
-            if (!API_BASE_URL) {
-                showToast('لم يتم ضبط مسار الخادم. راجع إعدادات config.js.', true);
-                return;
-            }
-            appContainer.classList.remove('hidden');
-            initMap();
-            if (!mapReady) {
-                return;
-            }
-            resetFlow(true);
-            setupSearchInputs();
-            setupSocket();
-            await fetchActiveOrder();
+      map.on('click', (event) => {
+        if (!pickupPoint) {
+          pickupPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
+          pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
+          pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
+          updateMarkers();
+        } else if (!dropoffPoint) {
+          dropoffPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
+          dropoffLabel.textContent = `التسليم: ${formatCoords(dropoffPoint)}`;
+          dropoffInput.value = `${dropoffPoint.lat.toFixed(6)}, ${dropoffPoint.lng.toFixed(6)}`;
+          updateMarkers();
         }
+      });
 
-        bootstrapApp();
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+          if (!pickupPoint) {
+            pickupPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
+            pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
+            updateMarkers();
+          }
+        });
+      }
+
+      function subscribeToOrder(orderId) {
+        if (socket) {
+          socket.emit('order:join', { orderId });
+        }
+      }
+
+      function handleOrderEvent(order) {
+        if (!order || !order.id) return;
+        currentOrder = order;
+        pickupPoint = order.pickup || pickupPoint;
+        dropoffPoint = order.dropoff || dropoffPoint;
+        updateMarkers();
+        if (order.distanceKm && order.durationMin) {
+          distanceLabel.textContent = `${Number(order.distanceKm).toFixed(2)} كم`;
+          durationLabel.textContent = `${Number(order.durationMin).toFixed(0)} دقيقة`;
+        }
+        if (order.price) {
+          priceLabel.textContent = `${Number(order.price).toFixed(2)} ر.س`;
+          pricingCard.classList.remove('hidden');
+        }
+        updateOrderUI(order);
+      }
+
+      function handleDriverLocation(payload) {
+        if (!currentOrder || payload.orderId !== currentOrder.id) {
+          return;
+        }
+        const nextPoint = { lat: Number(payload.lat), lng: Number(payload.lng) };
+        if (!driverMarker) {
+          driverMarker = window.MapKit.addMarker(map, {
+            lat: nextPoint.lat,
+            lng: nextPoint.lng,
+            label: 'المندوب'
+          });
+        } else {
+          window.MapKit.smoothDriverMarker(driverMarker, lastDriverLatLng, nextPoint);
+        }
+        lastDriverLatLng = nextPoint;
+        if (!driverTrail) {
+          driverTrail = L.polyline([], { color: '#2563eb', weight: 4, opacity: 0.8 }).addTo(map);
+        }
+        const path = driverTrail.getLatLngs();
+        path.push(L.latLng(nextPoint.lat, nextPoint.lng));
+        if (path.length > 100) {
+          driverTrail.setLatLngs(path.slice(path.length - 100));
+        } else {
+          driverTrail.setLatLngs(path);
+        }
+        window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
+      }
+
+      function setupSocket() {
+        socket = io(config.API_BASE_URL, {
+          transports: ['websocket'],
+          auth: { token: authToken }
+        });
+        socket.on('connect_error', (error) => {
+          window.UI?.showToast(error.message || 'تعذر الاتصال بالتحديثات اللحظية.', 'error');
+        });
+        socket.on('order:created', handleOrderEvent);
+        socket.on('order:driver_assigned', handleOrderEvent);
+        socket.on('order:status', handleOrderEvent);
+        socket.on('driver:location', handleDriverLocation);
+      }
+
+      async function resumeActiveOrder() {
+        try {
+          const response = await fetch(`${config.API_BASE_URL}/api/orders/history`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (!response.ok) return;
+          const history = await response.json();
+          if (!Array.isArray(history)) return;
+          const active = history.find((order) => !['DELIVERED', 'CANCELLED'].includes(order.status));
+          if (active) {
+            pickupPoint = active.pickup;
+            dropoffPoint = active.dropoff;
+            pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
+            dropoffLabel.textContent = `التسليم: ${formatCoords(dropoffPoint)}`;
+            updateMarkers();
+            try {
+              const result = await window.MapKit.routeAndEta(map, pickupPoint, dropoffPoint);
+              currentRouteControl = result.control;
+              distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
+              durationLabel.textContent = `${result.minutes} دقيقة`;
+              priceLabel.textContent = `${calculatePrice(result.km).toFixed(2)} ر.س`;
+              pricingCard.classList.remove('hidden');
+            } catch (error) {
+              console.warn('Failed to redraw route for active order', error);
+            }
+            currentOrder = active;
+            subscribeToOrder(active.id);
+            updateOrderUI(active);
+          }
+        } catch (error) {
+          console.warn('Failed to resume order', error);
+        }
+      }
+
+      setupSocket();
+      await resumeActiveOrder();
     });
-    </script>
-    <style>
-        .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.7}
-        .dev-menu:hover{opacity:1}
-        .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
-        .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
-    </style>
-    <div class="dev-menu">
-        <b>Dev</b> ·
-        <a href="/index.html">Home</a> |
-        <a href="/delivery_app.html">Customer</a> |
-        <a href="/driver_app.html">Driver</a> |
-        <a href="/admin_panel.html">Admin</a> ·
-        <button class="btn" id="setToken">Mock Login</button>
-        <button class="btn" id="clearToken">Logout</button>
-    </div>
-    <script>
-        document.getElementById('setToken')?.addEventListener('click', () => {
-            localStorage.setItem('authToken', 'dev-token');
-            alert('Mock token set');
-        });
-        document.getElementById('clearToken')?.addEventListener('click', () => {
-            localStorage.removeItem('authToken');
-            alert('Token removed');
-        });
-    </script>
+  </script>
 </body>
 </html>

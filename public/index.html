@@ -3,215 +3,214 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>تسجيل الدخول – Waslny</title>
+  <title>Waslny – تسجيل العملاء</title>
   <script src="/config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script defer src="/assets/js/ui.js"></script>
   <style>
-    :root { color-scheme: light; }
-    body { font-family: 'Tajawal', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f7f7f8; }
-    .wrap { max-width: 420px; margin: 6vh auto; background: #fff; padding: 28px 26px; border-radius: 18px; box-shadow: 0 16px 40px rgba(15,115,255,0.08); }
-    h1 { margin: 0 0 12px; font-size: 26px; color: #0f172a; }
-    p.hint { margin: 0 0 20px; color: #64748b; font-size: 15px; line-height: 1.6; }
-    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #1e293b; }
-    input { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #cbd5f5; background: #f8fafc; font-size: 16px; direction: ltr; text-align: left; }
-    input:focus { outline: none; border-color: #0f73ff; box-shadow: 0 0 0 3px rgba(15,115,255,0.12); }
-    button.primary { width: 100%; padding: 14px; border-radius: 12px; border: none; font-size: 16px; font-weight: 600; background: linear-gradient(135deg,#0f73ff,#2563eb); color: #fff; cursor: pointer; margin-top: 18px; }
-    button.primary:disabled { opacity: .65; cursor: default; }
-    .switcher { margin-top: 12px; font-size: 14px; text-align: center; color: #475569; }
-    .switcher button { background: none; border: none; color: #0f73ff; font-weight: 600; cursor: pointer; padding: 0 4px; }
-    .oauth { margin-top: 18px; display: grid; gap: 10px; }
-    .oauth button { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid #dbeafe; background: #fff; color: #0f172a; font-weight: 600; cursor: pointer; }
-    .roles { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-top: 24px; }
-    .roles button { padding: 12px; border-radius: 12px; border: 1px solid #0f73ff; background: #fff; color: #0f73ff; font-weight: 600; cursor: pointer; }
-    .alert { margin-top: 16px; border-radius: 12px; padding: 12px; font-size: 14px; display: none; }
-    .alert.error { background: rgba(239,68,68,.12); color: #b91c1c; }
-    .alert.success { background: rgba(16,185,129,.12); color: #047857; }
+    body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f1f5f9; }
   </style>
 </head>
-<body>
-  <div class="wrap">
-    <h1 id="form-title">مرحبا بك في Waslny</h1>
-    <p class="hint" id="form-hint">سجّل الدخول ببريدك الإلكتروني أو أنشئ حسابًا جديدًا للبدء بطلب التوصيل.</p>
+<body class="min-h-screen flex items-center justify-center px-4">
+  <div class="max-w-md w-full">
+    <div class="bg-white rounded-3xl shadow-xl px-7 py-8 space-y-6">
+      <div class="space-y-2 text-center">
+        <div class="inline-flex items-center justify-center gap-2 text-blue-600">
+          <i class="ph ph-map-trifold text-2xl"></i>
+          <span class="text-sm font-semibold uppercase tracking-wide">Waslny</span>
+        </div>
+        <h1 id="form-title" class="text-2xl font-bold text-slate-800">مرحبًا بعودتك</h1>
+        <p id="form-hint" class="text-sm text-slate-500">سجّل الدخول ببريدك الإلكتروني وكلمة المرور للمتابعة.</p>
+      </div>
 
-    <div class="alert" id="form-alert"></div>
+      <div id="form-alert" class="hidden text-sm font-medium px-4 py-3 rounded-2xl"></div>
 
-    <label for="name-input" id="name-label" style="display:none">الاسم الكامل</label>
-    <input id="name-input" placeholder="مثال: أحمد محمد" autocomplete="name" style="display:none" />
+      <div id="name-field" class="space-y-2 hidden">
+        <label for="name-input" class="text-xs font-semibold text-slate-500">الاسم الكامل</label>
+        <input id="name-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: أحمد محمد" autocomplete="name" />
+      </div>
 
-    <label for="email-input">البريد الإلكتروني</label>
-    <input id="email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+      <div class="space-y-2">
+        <label for="email-input" class="text-xs font-semibold text-slate-500">البريد الإلكتروني</label>
+        <input id="email-input" type="email" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="you@example.com" autocomplete="email" />
+      </div>
 
-    <label for="password-input">كلمة المرور</label>
-    <input id="password-input" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <div class="space-y-2">
+        <label for="password-input" class="text-xs font-semibold text-slate-500">كلمة المرور</label>
+        <input id="password-input" type="password" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="••••••••" autocomplete="current-password" />
+      </div>
 
-    <button class="primary" id="submit-btn">تسجيل الدخول</button>
+      <button id="submit-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
+        <i class="ph ph-arrow-right"></i>
+        <span>تسجيل الدخول</span>
+      </button>
 
-    <div class="switcher">
-      ليس لديك حساب؟ <button type="button" id="toggle-mode">إنشاء حساب جديد</button>
-    </div>
+      <div class="text-center text-sm text-slate-500">
+        <span id="toggle-message">ليس لديك حساب؟</span>
+        <button id="toggle-mode" class="text-blue-600 font-semibold hover:text-blue-700">إنشاء حساب جديد</button>
+      </div>
 
-    <div class="oauth">
-      <button type="button" id="google-btn">الدخول عبر Google</button>
-      <button type="button" id="facebook-btn">الدخول عبر Facebook</button>
-    </div>
+      <div class="grid gap-3">
+        <button id="google-btn" class="w-full inline-flex items-center justify-center gap-3 border border-slate-200 rounded-2xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
+          <i class="ph ph-google-logo"></i>
+          <span>الدخول عبر Google</span>
+        </button>
+        <button id="facebook-btn" class="w-full inline-flex items-center justify-center gap-3 border border-slate-200 rounded-2xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
+          <i class="ph ph-facebook-logo"></i>
+          <span>الدخول عبر Facebook</span>
+        </button>
+      </div>
 
-    <div class="roles">
-      <button type="button" id="driver-btn">أنا مندوب</button>
-      <button type="button" id="admin-btn">لوحة المشرف</button>
+      <div class="grid grid-cols-2 gap-3 pt-2">
+        <button id="driver-btn" class="inline-flex items-center justify-center gap-2 border border-blue-200 text-blue-600 rounded-2xl py-2 text-sm font-semibold hover:bg-blue-50 transition">
+          <i class="ph ph-steering-wheel"></i>
+          <span>أنا مندوب</span>
+        </button>
+        <button id="admin-btn" class="inline-flex items-center justify-center gap-2 border border-blue-200 text-blue-600 rounded-2xl py-2 text-sm font-semibold hover:bg-blue-50 transition">
+          <i class="ph ph-shield"></i>
+          <span>لوحة المشرف</span>
+        </button>
+      </div>
     </div>
   </div>
 
   <script>
-    const { API_BASE_URL } = window.__APP_CONFIG__ || {};
-    const alertBox = document.getElementById('form-alert');
-    const submitBtn = document.getElementById('submit-btn');
-    const toggleModeBtn = document.getElementById('toggle-mode');
-    const nameInput = document.getElementById('name-input');
-    const nameLabel = document.getElementById('name-label');
-    const emailInput = document.getElementById('email-input');
-    const passwordInput = document.getElementById('password-input');
-    const formTitle = document.getElementById('form-title');
-    const formHint = document.getElementById('form-hint');
+    document.addEventListener('DOMContentLoaded', () => {
+      const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+      const alertBox = document.getElementById('form-alert');
+      const submitBtn = document.getElementById('submit-btn');
+      const toggleModeBtn = document.getElementById('toggle-mode');
+      const toggleMessage = document.getElementById('toggle-message');
+      const nameField = document.getElementById('name-field');
+      const nameInput = document.getElementById('name-input');
+      const emailInput = document.getElementById('email-input');
+      const passwordInput = document.getElementById('password-input');
+      const formTitle = document.getElementById('form-title');
+      const formHint = document.getElementById('form-hint');
+      const googleBtn = document.getElementById('google-btn');
+      const facebookBtn = document.getElementById('facebook-btn');
+      const driverBtn = document.getElementById('driver-btn');
+      const adminBtn = document.getElementById('admin-btn');
 
-    let mode = 'login';
+      let mode = 'login';
 
-    function setAlert(message, type = 'error') {
-      if (!message) {
-        alertBox.style.display = 'none';
-        return;
-      }
-      alertBox.textContent = message;
-      alertBox.className = `alert ${type === 'success' ? 'success' : 'error'}`;
-      alertBox.style.display = 'block';
-    }
-
-    function updateMode(nextMode) {
-      mode = nextMode;
-      if (mode === 'register') {
-        formTitle.textContent = 'إنشاء حساب عميل جديد';
-        formHint.textContent = 'أدخل اسمك وبريدك وكلمة المرور لإنشاء حساب والبدء في طلب المندوب.';
-        submitBtn.textContent = 'إنشاء حساب';
-        toggleModeBtn.textContent = 'لدي حساب مسبقًا';
-        nameInput.style.display = 'block';
-        nameLabel.style.display = 'block';
-        passwordInput.autocomplete = 'new-password';
-      } else {
-        formTitle.textContent = 'مرحبًا بعودتك';
-        formHint.textContent = 'سجّل الدخول ببريدك الإلكتروني للمتابعة وطلب المندوب مباشرة.';
-        submitBtn.textContent = 'تسجيل الدخول';
-        toggleModeBtn.textContent = 'إنشاء حساب جديد';
-        nameInput.style.display = 'none';
-        nameLabel.style.display = 'none';
-        passwordInput.autocomplete = 'current-password';
-      }
-      setAlert('');
-    }
-
-    toggleModeBtn.addEventListener('click', () => {
-      updateMode(mode === 'login' ? 'register' : 'login');
-    });
-
-    async function submitForm() {
-      try {
-        if (!API_BASE_URL) {
-          throw new Error('لم يتم تهيئة الخادم بشكل صحيح.');
+      function setAlert(message, type = 'error') {
+        if (!message) {
+          alertBox.classList.add('hidden');
+          alertBox.textContent = '';
+          return;
         }
-        const email = (emailInput.value || '').trim().toLowerCase();
-        const password = passwordInput.value || '';
-        if (!email || !password) {
-          throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
-        }
-        submitBtn.disabled = true;
-        const payload = { email, password };
+        alertBox.textContent = message;
+        alertBox.className = `text-sm font-medium px-4 py-3 rounded-2xl ${
+          type === 'success' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
+        }`;
+        alertBox.classList.remove('hidden');
+      }
+
+      function updateMode(nextMode) {
+        mode = nextMode;
         if (mode === 'register') {
-          payload.name = (nameInput.value || '').trim();
-          if (!payload.name) {
-            throw new Error('الرجاء إدخال الاسم الكامل.');
-          }
-        }
-        const endpoint = mode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.message || 'تعذر إتمام العملية.');
-        }
-        if (data?.token) {
-          localStorage.setItem('authToken', data.token);
-          setAlert('تم تسجيل الدخول بنجاح، سيتم تحويلك الآن...', 'success');
-          window.location.href = '/delivery_app.html';
+          formTitle.textContent = 'إنشاء حساب جديد';
+          formHint.textContent = 'أدخل اسمك وبريدك الإلكتروني وكلمة المرور للبدء في طلب المندوب.';
+          submitBtn.innerHTML = '<i class="ph ph-user-plus"></i><span>إنشاء حساب</span>';
+          toggleMessage.textContent = 'لدي حساب مسبقًا؟';
+          toggleModeBtn.textContent = 'تسجيل الدخول';
+          nameField.classList.remove('hidden');
+          passwordInput.autocomplete = 'new-password';
         } else {
-          throw new Error('استجابة غير متوقعة من الخادم.');
+          formTitle.textContent = 'مرحبًا بعودتك';
+          formHint.textContent = 'سجّل الدخول ببريدك الإلكتروني وكلمة المرور للمتابعة.';
+          submitBtn.innerHTML = '<i class="ph ph-arrow-right"></i><span>تسجيل الدخول</span>';
+          toggleMessage.textContent = 'ليس لديك حساب؟';
+          toggleModeBtn.textContent = 'إنشاء حساب جديد';
+          nameField.classList.add('hidden');
+          passwordInput.autocomplete = 'current-password';
         }
-      } catch (error) {
-        setAlert(error.message || 'حدث خطأ غير متوقع.');
-      } finally {
-        submitBtn.disabled = false;
+        setAlert('');
       }
-    }
 
-    submitBtn.addEventListener('click', submitForm);
-    passwordInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        submitForm();
+      async function submitForm() {
+        try {
+          if (!API_BASE_URL) {
+            throw new Error('لم يتم ضبط مسار الخادم.');
+          }
+          const email = (emailInput.value || '').trim().toLowerCase();
+          const password = passwordInput.value || '';
+          if (!email || !password) {
+            throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
+          }
+          submitBtn.disabled = true;
+          submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+          const payload = { email, password };
+          if (mode === 'register') {
+            payload.name = (nameInput.value || '').trim();
+            if (!payload.name) {
+              throw new Error('الرجاء إدخال الاسم الكامل.');
+            }
+          }
+          const endpoint = mode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
+          const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || 'تعذر إتمام العملية.');
+          }
+          if (data?.token) {
+            localStorage.setItem('authToken', data.token);
+            setAlert('تم تسجيل الدخول بنجاح، سيتم تحويلك الآن...', 'success');
+            setTimeout(() => {
+              window.location.href = '/delivery_app.html';
+            }, 600);
+          } else {
+            throw new Error('استجابة غير متوقعة من الخادم.');
+          }
+        } catch (error) {
+          setAlert(error.message || 'حدث خطأ غير متوقع.');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
       }
-    });
 
-    document.getElementById('google-btn').addEventListener('click', () => {
-      window.location.href = '/v1/auth/google';
-    });
-    document.getElementById('facebook-btn').addEventListener('click', () => {
-      window.location.href = '/v1/auth/facebook';
-    });
+      toggleModeBtn.addEventListener('click', () => {
+        updateMode(mode === 'login' ? 'register' : 'login');
+      });
 
-    document.getElementById('driver-btn').addEventListener('click', () => {
-      window.location.href = '/driver_app.html';
-    });
-    document.getElementById('admin-btn').addEventListener('click', () => {
-      window.location.href = '/admin_panel.html';
-    });
+      submitBtn.addEventListener('click', submitForm);
+      passwordInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submitForm();
+        }
+      });
 
-    if (location.hash.startsWith('#token=')) {
-      const tokenValue = decodeURIComponent(location.hash.slice(7));
-      if (tokenValue) {
-        localStorage.setItem('authToken', tokenValue);
-        location.replace('/delivery_app.html');
-      } else {
-        location.hash = '';
+      googleBtn.addEventListener('click', () => {
+        window.location.href = '/v1/auth/google';
+      });
+      facebookBtn.addEventListener('click', () => {
+        window.location.href = '/v1/auth/facebook';
+      });
+      driverBtn.addEventListener('click', () => {
+        window.location.href = '/driver_app.html';
+      });
+      adminBtn.addEventListener('click', () => {
+        window.location.href = '/admin_panel.html';
+      });
+
+      if (location.hash.startsWith('#token=')) {
+        const token = decodeURIComponent(location.hash.slice(7));
+        if (token) {
+          localStorage.setItem('authToken', token);
+          window.location.replace('/delivery_app.html');
+          return;
+        }
       }
-    } else if (location.hash === '#login_error') {
-      setAlert('تعذر تسجيل الدخول عبر الخدمة الخارجية. حاول طريقة أخرى.');
-      history.replaceState({}, document.title, location.pathname);
-    }
 
-    updateMode('login');
-  </script>
-  <style>
-    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.7}
-    .dev-menu:hover{opacity:1}
-    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
-    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
-  </style>
-  <div class="dev-menu">
-    <b>Dev</b> ·
-    <a href="/index.html">Home</a> |
-    <a href="/delivery_app.html">Customer</a> |
-    <a href="/driver_app.html">Driver</a> |
-    <a href="/admin_panel.html">Admin</a> ·
-    <button class="btn" id="setToken">Mock Login</button>
-    <button class="btn" id="clearToken">Logout</button>
-  </div>
-  <script>
-    document.getElementById('setToken')?.addEventListener('click', () => {
-      localStorage.setItem('authToken', 'dev-token');
-      alert('Mock token set');
-    });
-    document.getElementById('clearToken')?.addEventListener('click', () => {
-      localStorage.removeItem('authToken');
-      alert('Token removed');
+      updateMode(mode);
     });
   </script>
 </body>
