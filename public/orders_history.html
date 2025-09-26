@@ -42,6 +42,27 @@
     </main>
   </div>
 
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       const config = window.__APP_CONFIG__ || {};

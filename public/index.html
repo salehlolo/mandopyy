@@ -27,12 +27,12 @@
       <div class="space-y-2">
         <label for="phone-input" class="text-xs font-semibold text-slate-500">رقم الجوال</label>
         <input id="phone-input" type="tel" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: 01012345678" autocomplete="tel" />
-        <p id="otp-hint" class="text-xs text-slate-500 hidden">أرسلنا لك رمزاً مكوّناً من 4 أرقام. أدخله أدناه خلال 5 دقائق.</p>
+        <p id="otp-hint" class="text-xs text-slate-500 hidden">أرسلنا لك رمزاً مكوّناً من 6 أرقام. أدخله أدناه خلال 5 دقائق.</p>
       </div>
 
       <div id="otp-section" class="space-y-2 hidden">
         <label for="otp-input" class="text-xs font-semibold text-slate-500">رمز التحقق</label>
-        <input id="otp-input" inputmode="numeric" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400 tracking-widest text-center" placeholder="____" />
+        <input id="otp-input" inputmode="numeric" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400 tracking-[0.4em] text-center" placeholder="______" />
       </div>
 
       <div class="space-y-3">
@@ -60,6 +60,28 @@
       <p class="text-center text-xs text-slate-500">يمكنك الوصول مباشرة إلى <a class="text-blue-600 font-semibold" href="/delivery_app.html">واجهة العميل</a> بعد تسجيل الدخول.</p>
     </section>
   </main>
+
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {

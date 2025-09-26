@@ -8,6 +8,12 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
   <script defer src="/assets/js/ui.js"></script>
   <script defer src="/assets/js/map.js"></script>
   <style>
@@ -77,11 +83,29 @@
           <div class="space-y-4">
             <div class="space-y-2">
               <label class="text-xs font-semibold text-slate-500">مكان الالتقاط</label>
-              <input id="pickup-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: مدينة نصر، القاهرة" />
+              <div class="flex items-center gap-2">
+                <input id="pickup-input" class="flex-1 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: مدينة نصر، القاهرة" />
+                <button type="button" id="pickup-save-btn" class="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 hover:bg-amber-100 transition"><span>⭐</span><span>حفظ</span></button>
+              </div>
+              <div class="flex items-center gap-2">
+                <select id="pickup-saved-select" class="flex-1 border border-slate-200 rounded-2xl px-3 py-2 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">عناوين الاستلام المحفوظة</option>
+                </select>
+                <button type="button" id="pickup-delete-btn" class="text-xs font-semibold text-rose-500 hover:text-rose-600 transition">حذف</button>
+              </div>
             </div>
             <div class="space-y-2">
               <label class="text-xs font-semibold text-slate-500">مكان التسليم</label>
-              <input id="dropoff-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: المعادي، القاهرة" />
+              <div class="flex items-center gap-2">
+                <input id="dropoff-input" class="flex-1 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: المعادي، القاهرة" />
+                <button type="button" id="dropoff-save-btn" class="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 hover:bg-amber-100 transition"><span>⭐</span><span>حفظ</span></button>
+              </div>
+              <div class="flex items-center gap-2">
+                <select id="dropoff-saved-select" class="flex-1 border border-slate-200 rounded-2xl px-3 py-2 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">عناوين التسليم المحفوظة</option>
+                </select>
+                <button type="button" id="dropoff-delete-btn" class="text-xs font-semibold text-rose-500 hover:text-rose-600 transition">حذف</button>
+              </div>
             </div>
           </div>
           <button id="route-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
@@ -163,6 +187,11 @@
                 <p id="order-payment-status" class="font-semibold text-slate-800">-</p>
               </div>
             </div>
+            <div class="bg-slate-50 rounded-2xl p-3">
+              <p class="text-xs text-slate-400 mb-1">رمز التسليم (PIN)</p>
+              <p id="order-pin" class="font-mono text-lg text-slate-800 tracking-[0.4em]">-</p>
+              <p class="text-xs text-slate-400 mt-1">سيتحقق منه المندوب عند التسليم.</p>
+            </div>
           </div>
           <div class="space-y-3">
             <button id="pay-card-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-2xl py-3 transition">
@@ -183,6 +212,28 @@
     </main>
   </div>
 
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
+
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       const config = window.__APP_CONFIG__ || {};
@@ -195,6 +246,12 @@
 
       const pickupInput = document.getElementById('pickup-input');
       const dropoffInput = document.getElementById('dropoff-input');
+      const pickupSaveBtn = document.getElementById('pickup-save-btn');
+      const dropoffSaveBtn = document.getElementById('dropoff-save-btn');
+      const pickupSavedSelect = document.getElementById('pickup-saved-select');
+      const dropoffSavedSelect = document.getElementById('dropoff-saved-select');
+      const pickupDeleteBtn = document.getElementById('pickup-delete-btn');
+      const dropoffDeleteBtn = document.getElementById('dropoff-delete-btn');
       const routeBtn = document.getElementById('route-btn');
       const pricingCard = document.getElementById('pricing-card');
       const distanceLabel = document.getElementById('distance-label');
@@ -216,6 +273,7 @@
       const orderAmountEl = document.getElementById('order-amount');
       const orderPaymentMethodEl = document.getElementById('order-payment-method');
       const orderPaymentStatusEl = document.getElementById('order-payment-status');
+      const orderPinEl = document.getElementById('order-pin');
       const historyBtn = document.getElementById('history-btn');
 
       guardMockBtn.addEventListener('click', () => {
@@ -232,6 +290,8 @@
       }
       guard.classList.add('hidden');
       app.classList.remove('hidden');
+
+      await refreshSavedAddresses();
 
       if ((config.PAY_PROVIDER || '').toLowerCase() !== 'paymob') {
         const cardOption = paymentMethodRadios.find((radio) => radio.value === 'card');
@@ -267,6 +327,8 @@
       let dropoffLabelValue = '';
       let paymentModal = null;
       let paymentPollTimer = null;
+      let savedAddresses = [];
+      updateSaveButtons();
 
       const statusLabels = {
         CREATED: 'تم إنشاء الطلب',
@@ -299,6 +361,143 @@
         failed: 'text-rose-600',
         pending: 'text-amber-600'
       };
+
+      function setSaveButtonState(button, enabled) {
+        if (!button) return;
+        button.disabled = !enabled;
+        button.classList.toggle('opacity-60', !enabled);
+        button.classList.toggle('cursor-not-allowed', !enabled);
+      }
+
+      function updateSaveButtons() {
+        const allowChanges =
+          !currentOrder || currentOrder.status === 'DELIVERED' || currentOrder.status === 'CANCELLED';
+        setSaveButtonState(pickupSaveBtn, Boolean(pickupPoint) && allowChanges);
+        setSaveButtonState(dropoffSaveBtn, Boolean(dropoffPoint) && allowChanges);
+        if (pickupSavedSelect) pickupSavedSelect.disabled = !allowChanges;
+        if (dropoffSavedSelect) dropoffSavedSelect.disabled = !allowChanges;
+      }
+
+      function addressDisplayLabel(address) {
+        if (!address) return '';
+        if (address.label) return address.label;
+        const lat = Number(address.lat);
+        const lng = Number(address.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        }
+        return 'عنوان بدون اسم';
+      }
+
+      function populateAddressSelect(selectEl, addresses, placeholder) {
+        if (!selectEl) return;
+        const previousValue = selectEl.value;
+        selectEl.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = placeholder;
+        selectEl.appendChild(defaultOption);
+        addresses.forEach((address) => {
+          const option = document.createElement('option');
+          option.value = String(address.id);
+          option.textContent = addressDisplayLabel(address);
+          selectEl.appendChild(option);
+        });
+        if (previousValue && addresses.some((addr) => String(addr.id) === previousValue)) {
+          selectEl.value = previousValue;
+        }
+      }
+
+      async function refreshSavedAddresses(showToast = false) {
+        if (!config.API_BASE_URL) return;
+        try {
+          const response = await fetch(`${config.API_BASE_URL}/v1/addresses/my`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (!response.ok) {
+            throw new Error('تعذر تحميل العناوين المحفوظة.');
+          }
+          const data = await response.json();
+          savedAddresses = Array.isArray(data) ? data : [];
+          populateAddressSelect(pickupSavedSelect, savedAddresses, 'عناوين الاستلام المحفوظة');
+          populateAddressSelect(dropoffSavedSelect, savedAddresses, 'عناوين التسليم المحفوظة');
+          updateSaveButtons();
+          if (showToast) {
+            window.UI?.showToast('تم تحديث العناوين المحفوظة.', 'success');
+          }
+        } catch (error) {
+          console.warn('Failed to refresh saved addresses', error);
+          if (showToast) {
+            window.UI?.showToast(error.message || 'تعذر تحديث العناوين.', 'error');
+          }
+        }
+      }
+
+      async function saveFavoriteAddress(point, rawLabel) {
+        if (!config.API_BASE_URL) {
+          throw new Error('لم يتم ضبط عنوان الخادم.');
+        }
+        const label = (rawLabel || '').trim() || formatCoords(point);
+        const response = await fetch(`${config.API_BASE_URL}/v1/addresses`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ label, lat: point.lat, lng: point.lng })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.message || 'تعذر حفظ العنوان.');
+        }
+        await refreshSavedAddresses();
+        return data;
+      }
+
+      async function deleteAddressById(id) {
+        if (!config.API_BASE_URL) {
+          throw new Error('لم يتم ضبط عنوان الخادم.');
+        }
+        const response = await fetch(`${config.API_BASE_URL}/v1/addresses/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.message || 'تعذر حذف العنوان.');
+        }
+        await refreshSavedAddresses();
+      }
+
+      async function applySavedAddress(address, type) {
+        if (!address) return;
+        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
+          window.UI?.showToast('لا يمكن تعديل المواقع أثناء وجود طلب نشط.', 'warning');
+          return;
+        }
+        const point = { lat: Number(address.lat), lng: Number(address.lng) };
+        if (type === 'pickup') {
+          pickupPoint = point;
+          pickupLabelValue = address.label || formatCoords(point);
+          pickupInput.value = address.label || '';
+          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
+        } else {
+          dropoffPoint = point;
+          dropoffLabelValue = address.label || formatCoords(point);
+          dropoffInput.value = address.label || '';
+          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+        }
+        updateMarkers();
+        updateSaveButtons();
+        if (pickupPoint && dropoffPoint) {
+          resetRoute();
+          try {
+            await drawRoute();
+          } catch (error) {
+            console.warn('Failed to draw route after selecting address', error);
+          }
+        }
+      }
 
       function formatCoords(point) {
         return `(${Number(point.lat).toFixed(5)}, ${Number(point.lng).toFixed(5)})`;
@@ -378,6 +577,10 @@
           radio.checked = radio.value === 'cash';
         });
         currentOrder = null;
+        if (orderPinEl) orderPinEl.textContent = '-';
+        if (pickupSavedSelect) pickupSavedSelect.value = '';
+        if (dropoffSavedSelect) dropoffSavedSelect.value = '';
+        updateSaveButtons();
       }
 
       function updateOrderUI(order) {
@@ -416,6 +619,9 @@
         orderPaymentStatusEl.className = `text-xs font-semibold ${
           paymentStatusClasses[paymentStatusKey] || 'text-slate-600'
         } mt-1`;
+        if (orderPinEl) {
+          orderPinEl.textContent = order.pinCode || '-';
+        }
         const showPayButton = order.paymentMethod === 'card' && paymentStatusKey !== 'paid';
         payCardBtn.classList.toggle('hidden', !showPayButton);
         if (paymentStatusKey === 'paid') {
@@ -440,10 +646,101 @@
         }
 
         window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
+        updateSaveButtons();
       }
 
       function calculatePrice(distanceKm) {
         return Number((20 + distanceKm * 4).toFixed(2));
+      }
+
+      if (pickupSaveBtn) {
+        pickupSaveBtn.addEventListener('click', async () => {
+          if (!pickupPoint) {
+            window.UI?.showToast('حدد موقع الاستلام أولاً.', 'warning');
+            return;
+          }
+          try {
+            const saved = await saveFavoriteAddress(pickupPoint, pickupInput.value || pickupLabelValue);
+            if (pickupSavedSelect && saved?.id != null) {
+              pickupSavedSelect.value = String(saved.id);
+            }
+            window.UI?.showToast('تم حفظ عنوان الاستلام.', 'success');
+          } catch (error) {
+            window.UI?.showToast(error.message || 'تعذر حفظ العنوان.', 'error');
+          }
+        });
+      }
+
+      if (dropoffSaveBtn) {
+        dropoffSaveBtn.addEventListener('click', async () => {
+          if (!dropoffPoint) {
+            window.UI?.showToast('حدد موقع التسليم أولاً.', 'warning');
+            return;
+          }
+          try {
+            const saved = await saveFavoriteAddress(dropoffPoint, dropoffInput.value || dropoffLabelValue);
+            if (dropoffSavedSelect && saved?.id != null) {
+              dropoffSavedSelect.value = String(saved.id);
+            }
+            window.UI?.showToast('تم حفظ عنوان التسليم.', 'success');
+          } catch (error) {
+            window.UI?.showToast(error.message || 'تعذر حفظ العنوان.', 'error');
+          }
+        });
+      }
+
+      if (pickupSavedSelect) {
+        pickupSavedSelect.addEventListener('change', async () => {
+          const selectedId = pickupSavedSelect.value;
+          const address = savedAddresses.find((item) => String(item.id) === selectedId);
+          if (address) {
+            await applySavedAddress(address, 'pickup');
+          }
+        });
+      }
+
+      if (dropoffSavedSelect) {
+        dropoffSavedSelect.addEventListener('change', async () => {
+          const selectedId = dropoffSavedSelect.value;
+          const address = savedAddresses.find((item) => String(item.id) === selectedId);
+          if (address) {
+            await applySavedAddress(address, 'dropoff');
+          }
+        });
+      }
+
+      function confirmDeleteFor(selectEl) {
+        const id = selectEl?.value;
+        if (!id) {
+          window.UI?.showToast('اختر عنوانًا لحذفه أولاً.', 'info');
+          return;
+        }
+        window.UI?.showModal({
+          title: 'حذف العنوان',
+          message: 'هل أنت متأكد من إزالة هذا العنوان من قائمتك المفضلة؟',
+          confirmText: 'حذف',
+          confirmVariant: 'danger',
+          cancelText: 'تراجع',
+          onConfirm: async () => {
+            try {
+              await deleteAddressById(id);
+              if (selectEl) {
+                selectEl.value = '';
+              }
+              window.UI?.showToast('تم حذف العنوان.', 'info');
+            } catch (error) {
+              window.UI?.showToast(error.message || 'تعذر حذف العنوان.', 'error');
+            }
+          }
+        });
+      }
+
+      if (pickupDeleteBtn) {
+        pickupDeleteBtn.addEventListener('click', () => confirmDeleteFor(pickupSavedSelect));
+      }
+
+      if (dropoffDeleteBtn) {
+        dropoffDeleteBtn.addEventListener('click', () => confirmDeleteFor(dropoffSavedSelect));
       }
 
       async function geocode(query) {
@@ -513,6 +810,10 @@
       }
 
       routeBtn.addEventListener('click', async () => {
+        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
+          window.UI?.showToast('لا يمكن تعديل المسار أثناء وجود طلب نشط.', 'warning');
+          return;
+        }
         try {
           resetRoute();
           resetDriverTracking();
@@ -526,6 +827,7 @@
           dropoffLabelValue = dropoffResult.label;
           pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
           dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+          updateSaveButtons();
           updateMarkers();
           await drawRoute();
         } catch (error) {
@@ -616,18 +918,23 @@
       });
 
       map.on('click', (event) => {
+        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
+          return;
+        }
         if (!pickupPoint) {
           pickupPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
           pickupLabelValue = formatCoords(pickupPoint);
           pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
           pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
           updateMarkers();
+          updateSaveButtons();
         } else if (!dropoffPoint) {
           dropoffPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
           dropoffLabelValue = formatCoords(dropoffPoint);
           dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
           dropoffInput.value = `${dropoffPoint.lat.toFixed(6)}, ${dropoffPoint.lng.toFixed(6)}`;
           updateMarkers();
+          updateSaveButtons();
         }
       });
 
@@ -639,6 +946,7 @@
             pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
             pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
             updateMarkers();
+            updateSaveButtons();
           }
         });
       }

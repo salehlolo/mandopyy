@@ -11,6 +11,7 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const paymobService = require('./services/paymob');
+const { genCode6, sha256, now, ttlMs } = require('./utils/otp');
 let twilioClient = null;
 
 // Centralised configuration so developers can clearly see which environment
@@ -101,14 +102,7 @@ const app = express();
 app.use(helmet());
 app.use(express.json());
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-const quoteLimiter = rateLimit({
+const otpAndQuoteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
@@ -150,6 +144,8 @@ app.use(
     credentials: false
   })
 );
+
+app.use(['/v1/auth/otp', '/v1/auth/otp/', '/api/auth/otp', '/api/auth/otp/', '/api/quote'], otpAndQuoteLimiter);
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -334,6 +330,8 @@ async function initDatabase() {
   await ensureColumn('orders', 'payment_status', "payment_status TEXT DEFAULT 'pending'");
   await ensureColumn('orders', 'pickup_label', 'pickup_label TEXT');
   await ensureColumn('orders', 'dropoff_label', 'dropoff_label TEXT');
+  await ensureColumn('orders', 'pin_code', 'pin_code TEXT');
+  await ensureColumn('orders', 'created_at', 'created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('drivers', 'availability_status', "availability_status TEXT DEFAULT 'offline'");
   await ensureColumn('drivers', 'last_lat', 'last_lat REAL');
   await ensureColumn('drivers', 'last_lng', 'last_lng REAL');
@@ -341,10 +339,10 @@ async function initDatabase() {
   await dbRun(`CREATE TABLE IF NOT EXISTS payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL,
-      provider TEXT NOT NULL,
+      provider TEXT,
       amount_cents INTEGER NOT NULL,
       currency TEXT DEFAULT 'EGP',
-      status TEXT,
+      status TEXT NOT NULL,
       provider_ref TEXT,
       raw TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -353,11 +351,37 @@ async function initDatabase() {
 
   await dbRun('CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)');
 
+  await dbRun(`CREATE TABLE IF NOT EXISTS addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      label TEXT,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
+
   await dbRun(`CREATE TABLE IF NOT EXISTS otps (
       phone TEXT PRIMARY KEY,
-      code TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
+      code_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER DEFAULT 0
     )`);
+
+  const otpInfo = await dbAll('PRAGMA table_info(otps)');
+  const needsOtpRebuild = otpInfo.some((row) => row.name === 'code');
+  if (needsOtpRebuild) {
+    await dbRun('ALTER TABLE otps RENAME TO otps_old');
+    await dbRun(`CREATE TABLE otps (
+        phone TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER DEFAULT 0
+      )`);
+    await dbRun('DROP TABLE otps_old');
+  } else if (!otpInfo.some((row) => row.name === 'attempts')) {
+    await dbRun('ALTER TABLE otps ADD COLUMN attempts INTEGER DEFAULT 0');
+  }
 
   await dbRun(`CREATE TABLE IF NOT EXISTS rate_limits (
       key TEXT PRIMARY KEY,
@@ -461,53 +485,44 @@ async function ensureUserByPhone(phoneNumber, desiredRole = 'customer') {
   return getUserById(insert.lastID);
 }
 
-const OTP_TTL_MS = 5 * 60 * 1000;
+const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MIN || 5);
+const OTP_TTL_MS = ttlMs(OTP_TTL_MINUTES);
 const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const OTP_RATE_LIMIT_MAX = 3;
+const OTP_RATE_LIMIT_MAX = Number(process.env.OTP_RATE_LIMIT_PER_15M || 3);
+const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 5);
 
-async function upsertOtp(phoneNumber, code, expiresAt) {
+async function upsertOtp(phoneNumber, codeHash, expiresAt) {
   await dbRun(
-    `INSERT INTO otps (phone, code, expires_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(phone) DO UPDATE SET code = excluded.code, expires_at = excluded.expires_at`,
-    [phoneNumber, code, expiresAt]
+    `INSERT INTO otps (phone, code_hash, expires_at, attempts)
+       VALUES (?, ?, ?, 0)
+       ON CONFLICT(phone) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0`,
+    [phoneNumber, codeHash, expiresAt]
   );
 }
 
-async function consumeOtp(phoneNumber, code) {
-  const record = await dbGet('SELECT code, expires_at FROM otps WHERE phone = ?', [phoneNumber]);
-  if (!record) {
-    return { valid: false, reason: 'OTP_NOT_FOUND' };
-  }
-  if (Number(record.expires_at) < Date.now()) {
-    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
-    return { valid: false, reason: 'OTP_EXPIRED' };
-  }
-  const matches = String(record.code) === String(code);
-  if (matches) {
-    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
-  }
-  return { valid: matches, reason: matches ? 'OK' : 'OTP_MISMATCH' };
+async function getOtp(phoneNumber) {
+  return dbGet('SELECT phone, code_hash, expires_at, attempts FROM otps WHERE phone = ?', [phoneNumber]);
 }
 
-async function incrementRateLimit(key, limit, windowMs) {
-  const now = Date.now();
-  const existing = await dbGet('SELECT count, window_start FROM rate_limits WHERE key = ?', [key]);
-  if (!existing) {
-    await dbRun('INSERT INTO rate_limits (key, count, window_start) VALUES (?, ?, ?)', [key, 1, now]);
-    return { allowed: true, remaining: limit - 1 };
-  }
-  const windowStart = Number(existing.window_start);
-  if (now - windowStart > windowMs) {
-    await dbRun('UPDATE rate_limits SET count = ?, window_start = ? WHERE key = ?', [1, now, key]);
-    return { allowed: true, remaining: limit - 1 };
-  }
-  const nextCount = Number(existing.count) + 1;
-  await dbRun('UPDATE rate_limits SET count = ? WHERE key = ?', [nextCount, key]);
-  if (nextCount > limit) {
-    return { allowed: false, remaining: 0 };
-  }
-  return { allowed: true, remaining: limit - nextCount };
+async function incrementOtpAttempt(phoneNumber) {
+  await dbRun('UPDATE otps SET attempts = attempts + 1 WHERE phone = ?', [phoneNumber]);
+}
+
+async function deleteOtp(phoneNumber) {
+  await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+}
+
+async function getRateLimit(key) {
+  return dbGet('SELECT count, window_start FROM rate_limits WHERE key = ?', [key]);
+}
+
+async function setRateLimit(key, count, windowStart) {
+  await dbRun(
+    `INSERT INTO rate_limits (key, count, window_start)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET count = excluded.count, window_start = excluded.window_start`,
+    [key, count, windowStart]
+  );
 }
 
 async function sendOtpSms(phoneNumber, code) {
@@ -568,6 +583,7 @@ async function getOrderDetails(orderId) {
     dropoffLabel: row.dropoff_label || null,
     pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
     dropoff: { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) },
+    pinCode: row.pin_code || null,
     customer: {
       id: row.customer_id,
       name: row.customer_name || '',
@@ -752,20 +768,19 @@ async function assignPendingOrders() {
 }
 
 // --- Configuration endpoint shared by the three front-ends ---
-app.use('/api/quote', quoteLimiter);
-
 app.get('/config.js', (req, res) => {
   res.type('application/javascript');
   res.send(`// generated by server\nwindow.__APP_CONFIG__ = ${JSON.stringify({
     API_BASE_URL: CONFIG.apiBaseUrl,
     GOOGLE_MAPS_API_KEY: CONFIG.googleMapsApiKey,
+    NODE_ENV: CONFIG.environment,
     MAP_PROVIDER: CONFIG.mapProvider,
     OSM_ROUTING_URL: CONFIG.osmRoutingUrl,
     NOMINATIM_URL: CONFIG.nominatimUrl,
     MAPTILER_KEY: CONFIG.maptilerKey,
     MAPBOX_TOKEN: CONFIG.mapboxToken,
-    NODE_ENV: CONFIG.environment,
-    PAY_PROVIDER: CONFIG.payProvider
+    PAY_PROVIDER: CONFIG.payProvider,
+    PAYMOB_IFRAME_ID: CONFIG.paymobIframeId
   })};`);
 });
 
@@ -782,7 +797,7 @@ app.get('/health', (req, res) => {
 // --- Authentication Endpoints (OTP only) ---
 const otpRequestHandlers = ['/api/auth/otp/request', '/v1/auth/otp/request'];
 otpRequestHandlers.forEach((route) => {
-  app.post(route, authLimiter, async (req, res, next) => {
+  app.post(route, async (req, res, next) => {
     try {
       const { phone } = req.body || {};
       const normalised = normalisePhone(phone);
@@ -791,18 +806,25 @@ otpRequestHandlers.forEach((route) => {
       }
 
       const rateKey = `otp:${normalised}`;
-      const { allowed } = await incrementRateLimit(
-        rateKey,
-        OTP_RATE_LIMIT_MAX,
-        OTP_RATE_LIMIT_WINDOW_MS
-      );
-      if (!allowed) {
-        throw new HttpError(429, 'تم تجاوز الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
+      const existingLimit = await getRateLimit(rateKey);
+      const nowTs = now();
+      if (!existingLimit) {
+        await setRateLimit(rateKey, 1, nowTs);
+      } else {
+        const windowStart = Number(existingLimit.window_start);
+        const withinWindow = nowTs - windowStart < OTP_RATE_LIMIT_WINDOW_MS;
+        const nextCount = withinWindow ? Number(existingLimit.count) + 1 : 1;
+        const effectiveWindowStart = withinWindow ? windowStart : nowTs;
+        if (withinWindow && nextCount > OTP_RATE_LIMIT_MAX) {
+          throw new HttpError(429, 'تجاوزت الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
+        }
+        await setRateLimit(rateKey, nextCount, effectiveWindowStart);
       }
 
-      const code = String(Math.floor(1000 + Math.random() * 9000));
-      const expiresAt = Date.now() + OTP_TTL_MS;
-      await upsertOtp(normalised, code, expiresAt);
+      const code = genCode6();
+      const hash = sha256(code);
+      const expiresAt = nowTs + OTP_TTL_MS;
+      await upsertOtp(normalised, hash, expiresAt);
       const delivery = await sendOtpSms(normalised, code);
 
       res.json({
@@ -819,7 +841,7 @@ otpRequestHandlers.forEach((route) => {
 
 const otpVerifyHandlers = ['/api/auth/otp/verify', '/v1/auth/otp/verify'];
 otpVerifyHandlers.forEach((route) => {
-  app.post(route, authLimiter, async (req, res, next) => {
+  app.post(route, async (req, res, next) => {
     try {
       const { phone, code, role } = req.body || {};
       const normalised = normalisePhone(phone);
@@ -830,10 +852,25 @@ otpVerifyHandlers.forEach((route) => {
         throw new HttpError(400, 'رمز التحقق مطلوب');
       }
 
-      const validation = await consumeOtp(normalised, String(code).trim());
-      if (!validation.valid) {
-        throw new HttpError(400, 'رمز التحقق غير صحيح أو منتهي الصلاحية');
+      const record = await getOtp(normalised);
+      if (!record) {
+        throw new HttpError(400, 'لا يوجد رمز تحقق لهذا الرقم');
       }
+      if (now() > Number(record.expires_at)) {
+        await deleteOtp(normalised);
+        throw new HttpError(400, 'انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا');
+      }
+      if (Number(record.attempts) >= OTP_MAX_ATTEMPTS) {
+        throw new HttpError(400, 'تجاوزت عدد المحاولات المسموح، اطلب رمزًا جديدًا');
+      }
+
+      const providedHash = sha256(String(code).trim());
+      await incrementOtpAttempt(normalised);
+      if (providedHash !== record.code_hash) {
+        throw new HttpError(400, 'رمز التحقق غير صحيح');
+      }
+
+      await deleteOtp(normalised);
 
       const desiredRole = String(role || 'customer').toLowerCase() === 'driver' ? 'driver' : 'customer';
       const user = await ensureUserByPhone(normalised, desiredRole);
@@ -1034,6 +1071,7 @@ app.post('/api/orders', authenticate, async (req, res, next) => {
     const paymentStatus = paymentMethod === 'card' ? 'pending' : 'pending';
     const priceTotal = quote.price;
 
+    const pinCode = genCode6();
     const insert = await dbRun(
       `INSERT INTO orders (
           customer_id,
@@ -1048,9 +1086,10 @@ app.post('/api/orders', authenticate, async (req, res, next) => {
           payment_method,
           payment_status,
           pickup_label,
-          dropoff_label
+          dropoff_label,
+          pin_code
         )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.user.id,
         pickup.lat,
@@ -1064,7 +1103,8 @@ app.post('/api/orders', authenticate, async (req, res, next) => {
         paymentMethod,
         paymentStatus,
         pickupLabel,
-        dropoffLabel
+        dropoffLabel,
+        pinCode
       ]
     );
 
@@ -1201,6 +1241,74 @@ app.get('/v1/orders/:id', authenticate, async (req, res, next) => {
       throw new HttpError(403, 'Forbidden');
     }
     res.json(details);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/addresses/my', authenticate, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, label, lat, lng, created_at
+         FROM addresses
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 50`,
+      [req.user.id]
+    );
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        label: row.label || '',
+        lat: Number(row.lat),
+        lng: Number(row.lng),
+        createdAt: row.created_at
+      }))
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/addresses', authenticate, async (req, res, next) => {
+  try {
+    const { label, lat, lng } = req.body || {};
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new HttpError(400, 'Valid coordinates are required');
+    }
+    const name = typeof label === 'string' ? label.trim() : '';
+    const insert = await dbRun(
+      'INSERT INTO addresses (user_id, label, lat, lng) VALUES (?, ?, ?, ?)',
+      [req.user.id, name, latitude, longitude]
+    );
+    res.status(201).json({
+      id: insert.lastID,
+      label: name,
+      lat: latitude,
+      lng: longitude
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/v1/addresses/:id', authenticate, async (req, res, next) => {
+  try {
+    const addressId = Number(req.params.id);
+    if (!Number.isFinite(addressId)) {
+      throw new HttpError(400, 'Invalid address id');
+    }
+    const address = await dbGet('SELECT user_id FROM addresses WHERE id = ?', [addressId]);
+    if (!address) {
+      throw new HttpError(404, 'Address not found');
+    }
+    if (address.user_id !== req.user.id) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    await dbRun('DELETE FROM addresses WHERE id = ?', [addressId]);
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }

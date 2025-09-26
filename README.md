@@ -1,43 +1,46 @@
 # Waslny Delivery Platform
 
-## Local development
+## الإعداد
+1. انسخ ملف البيئة النموذجي ثم عدِّل القيم بما يناسبك:
+   ```bash
+   cp .env.example .env
+   ```
+2. أهم المتغيرات:
+   - `API_BASE_URL` عنوان الخادم الذي ستخاطبه الواجهات (غيّره إلى `http://<IP-PC>:3000` إذا اختبرت من جهاز آخر).
+   - `JWT_SECRET` مفتاح توقيع الـJWT.
+   - إعدادات OTP/SMS: أبقِ `SMS_PROVIDER=current`، وإذا أردت الإرسال الحقيقي فعّل بيانات Twilio (`TWILIO_*`). استخدم `OTP_TTL_MIN`, `OTP_MAX_ATTEMPTS`, `OTP_RATE_LIMIT_PER_15M` للتحكم في صلاحية الرمز والحد من الإسراف.
+   - إعدادات الخرائط: `MAP_PROVIDER=leaflet` مع `OSM_ROUTING_URL` و`NOMINATIM_URL` (افتراضات مجانية للتطوير).
+   - الدفع الإلكتروني: `PAY_PROVIDER=paymob` مع مفاتيح Accept (`PAYMOB_API_KEY`, `PAYMOB_INTEGRATION_ID_CARD`, `PAYMOB_IFRAME_ID`, `PAYMOB_HMAC_SECRET`).
+   - `NODE_ENV` يتحكم في إظهار قائمة التطوير (Dev Menu).
 
-1. Install dependencies:
-
+## التشغيل
+1. ثبّت الاعتمادات وشغّل الخادم:
    ```bash
    npm install
-   ```
-
-2. Create a `.env` file (a template is provided in `.env.example`) and adjust the values as needed. All API keys and secrets must live in this file.
-
-   Key variables:
-
-   - `JWT_SECRET` – signing key for customer/driver JSON Web Tokens.
-   - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` – optional; when present the server will send OTP codes via Twilio, otherwise it falls back to mock delivery for development.
-   - `BASE_URL` / `FRONTEND_URL` – used by the server to build absolute links when required (e.g. external callbacks).
-   - `MAP_PROVIDER`, `OSM_ROUTING_URL`, `NOMINATIM_URL` – configure the map stack. Defaults point to Leaflet + open-source OSRM/Nominatim which are suitable for development.
-   - `MAPTILER_KEY` / `MAPBOX_TOKEN` – optional production-ready providers if you want to switch to vector tiles or managed routing.
-   - `PAY_PROVIDER` – set to `paymob` to enable card payments. Configure `PAYMOB_API_KEY`, `PAYMOB_INTEGRATION_ID_CARD`, `PAYMOB_IFRAME_ID`, `PAYMOB_HMAC_SECRET`, and `PAYMOB_BASE` with your Accept credentials. Optional failover keys exist for Fawry (`FAWRY_*`).
-   - `NODE_ENV` – when set to `production` the floating development menu is hidden from all pages.
-
-3. Start the server:
-
-   ```bash
    npm run dev
    ```
+2. الواجهات متاحة مباشرة من الخادم:
+   - `/index.html` صفحة تسجيل العميل بالهاتف.
+   - `/delivery_app.html` تطبيق العميل (خريطة Leaflet + تسعير + Paymob).
+   - `/driver_app.html` تطبيق السائق (OTP، بيانات المركبة، حالة التوفر).
+   - `/admin_panel.html` لوحة المشرف (اعتماد السائقين، تتبع المدفوعات).
+   - `/orders_history.html` سجل الطلبات للعميل.
 
-   The server exposes the web apps from the `public/` directory and a JSON API.
+## الاختبار (Smoke Test)
+- **OTP**
+  - اطلب الرمز 3 مرات خلال 15 دقيقة ثم جرّب الرابعة → يجب أن تحصل على `429 Too many OTP requests`.
+  - جرّب إدخال رمز خاطئ 5 مرات → رسالة "Too many attempts".
+  - استخدم رمز منتهي الصلاحية بعد مرور مدة `OTP_TTL_MIN` → رسالة "OTP expired".
+- **تجربة العميل**
+  - بدون `authToken` زيارة `/delivery_app.html` تعيدك إلى `/index.html`.
+  - حدّد نقطتي الالتقاط/التسليم (أو اختر من العناوين المحفوظة) → يظهر المسار، المسافة، الوقت، والسعر التقديري (20 + 4/كم).
+  - اختر الدفع النقدي وأكمل الطلب → يتم إسناد أقرب مندوب أو تظهر رسالة عدم توفر.
+  - اختر الدفع بالبطاقة → افتح iFrame Paymob، وبعد النجاح تأكد أن حالة الدفع في الطلب تصبح `paid` وتظهر في سجل الطلبات.
+- **التتبّع والسائق**
+  - من تطبيق السائق، ادخل كود OTP وفعّل التتبع؛ حركة الماركر في تطبيق العميل يجب أن تكون ناعمة مع Trail ≤ 100 نقطة.
+- **لوحة المشرف**
+  - سجّل الدخول بكلمة المرور من `.env`، فعِّل/عطّل اعتماد السائقين ولاحظ التحديثات مع Toast.
+- **سجل الطلبات**
+  - زر `/orders_history.html` واعرض آخر 50 طلبًا مع حالة الدفع وزر التفاصيل.
 
-> **ملاحظة:** عند فتح الواجهات على جهاز آخر داخل نفس الشبكة المحلية، عدِّل المتغير `API_BASE_URL` في ملف `.env` إلى `http://<IP-PC>:3000` ثم أعد تشغيل الخادم.
-
-## واجهات الويب
-
-كل صفحة من الصفحات التالية تعتمد على TailwindCSS عبر CDN بالإضافة إلى مكتبات مساعدة داخلية (`/assets/js/ui.js` و`/assets/js/map.js`).
-
-- `/index.html` — صفحة الهبوط، تسجيل العملاء عبر رمز تحقق OTP بالهاتف مع روابط سريعة لتطبيق السائق والمشرف.
-- `/delivery_app.html` — خريطة Leaflet مع تسعير باستخدام OSRM، تأكيد الطلب، وتتبع السائق بسلاسة (Trail محدود 100 نقطة).
-- `/driver_app.html` — تسجيل السائق عبر OTP، إرسال بيانات المركبة، التحكم بحالة التوفر، تتبع الموقع والإشعارات اللحظية مع عرض واضح لطريقة الدفع.
-- `/admin_panel.html` — لوحة إدارة تعتمد جداول Tailwind وخريطة صغيرة تعرض آخر مواقع المناديب المتاحين، مع أزرار اعتماد/إلغاء اعتماد، بالإضافة إلى جدول لمتابعة الدفعات الإلكترونية (Paymob).
-- `/orders_history.html` — صفحة مخصصة لعرض سجل الطلبات للعميل، حالة الدفع، وإظهار التفاصيل عند الطلب.
-
-> **Dev Menu:** يظهر شريط تنقل صغير في أسفل يمين الصفحات في وضع التطوير، ويوفر أزرار Mock Login/Logout وروابط بين الواجهات. يتم تعطيله تلقائيًا إذا كان `NODE_ENV=production`.
+> قائمة التطوير (Dev Menu) تظهر أسفل يمين كل صفحة أثناء التطوير لتسهيل الانتقال ووضع توكن تجريبي. تختفي تلقائيًا عندما يكون `NODE_ENV=production`.
