@@ -44,10 +44,16 @@
           <p class="text-xs text-slate-400">مرحبًا بك في</p>
           <h1 class="text-xl font-semibold text-slate-800">Waslny – طلب مندوب محلي</h1>
         </div>
-        <button id="logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
-          <i class="ph ph-sign-out"></i>
-          <span>تسجيل الخروج</span>
-        </button>
+        <div class="flex items-center gap-3">
+          <button id="history-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
+            <i class="ph ph-clock-counter-clockwise"></i>
+            <span>سجل الطلبات</span>
+          </button>
+          <button id="logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
+            <i class="ph ph-sign-out"></i>
+            <span>تسجيل الخروج</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -103,6 +109,19 @@
               <p id="price-label" class="text-2xl font-bold text-blue-600">-</p>
             </div>
           </div>
+          <div class="space-y-2">
+            <p class="text-xs font-semibold text-slate-500">طريقة الدفع</p>
+            <div class="grid gap-2">
+              <label class="flex items-center justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-600 hover:border-blue-200 transition">
+                <span class="flex items-center gap-2"><i class="ph ph-money"></i>دفع نقدي عند التسليم</span>
+                <input type="radio" name="payment-method" value="cash" class="accent-blue-600" checked />
+              </label>
+              <label class="flex items-center justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-600 hover:border-blue-200 transition">
+                <span class="flex items-center gap-2"><i class="ph ph-credit-card"></i>بطاقة (Paymob)</span>
+                <input type="radio" name="payment-method" value="card" class="accent-blue-600" />
+              </label>
+            </div>
+          </div>
           <div class="space-y-1 text-xs text-slate-500">
             <p id="pickup-label">لم يتم تحديد موقع الاستلام بعد.</p>
             <p id="dropoff-label">لم يتم تحديد موقع التسليم بعد.</p>
@@ -133,8 +152,23 @@
               <p class="text-xs text-slate-400 mb-1">وسيلة التواصل</p>
               <p id="driver-phone" class="font-mono text-sm text-slate-700">-</p>
             </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">قيمة الطلب</p>
+                <p id="order-amount" class="font-semibold text-slate-800">-</p>
+                <p id="order-payment-method" class="text-xs text-slate-400 mt-1">-</p>
+              </div>
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">حالة الدفع</p>
+                <p id="order-payment-status" class="font-semibold text-slate-800">-</p>
+              </div>
+            </div>
           </div>
           <div class="space-y-3">
+            <button id="pay-card-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-2xl py-3 transition">
+              <i class="ph ph-credit-card"></i>
+              <span>إتمام الدفع بالبطاقة</span>
+            </button>
             <button id="cancel-btn" class="w-full inline-flex items-center justify-center gap-2 bg-rose-100 text-rose-600 font-semibold rounded-2xl py-3 transition hover:bg-rose-200">
               <i class="ph ph-x-circle text-lg"></i>
               <span>إلغاء الطلب</span>
@@ -169,6 +203,7 @@
       const pickupLabel = document.getElementById('pickup-label');
       const dropoffLabel = document.getElementById('dropoff-label');
       const confirmBtn = document.getElementById('confirm-btn');
+      const paymentMethodRadios = Array.from(document.querySelectorAll('input[name="payment-method"]'));
 
       const orderCard = document.getElementById('order-card');
       const orderStatusPill = document.getElementById('order-status-pill');
@@ -177,6 +212,11 @@
       const driverPhoneEl = document.getElementById('driver-phone');
       const cancelBtn = document.getElementById('cancel-btn');
       const newOrderBtn = document.getElementById('new-order-btn');
+      const payCardBtn = document.getElementById('pay-card-btn');
+      const orderAmountEl = document.getElementById('order-amount');
+      const orderPaymentMethodEl = document.getElementById('order-payment-method');
+      const orderPaymentStatusEl = document.getElementById('order-payment-status');
+      const historyBtn = document.getElementById('history-btn');
 
       guardMockBtn.addEventListener('click', () => {
         localStorage.setItem('authToken', 'dev-token');
@@ -193,9 +233,21 @@
       guard.classList.add('hidden');
       app.classList.remove('hidden');
 
+      if ((config.PAY_PROVIDER || '').toLowerCase() !== 'paymob') {
+        const cardOption = paymentMethodRadios.find((radio) => radio.value === 'card');
+        if (cardOption) {
+          cardOption.disabled = true;
+          cardOption.parentElement.classList.add('opacity-60', 'cursor-not-allowed');
+        }
+      }
+
       logoutBtn.addEventListener('click', () => {
         localStorage.removeItem('authToken');
         window.location.href = '/index.html';
+      });
+
+      historyBtn.addEventListener('click', () => {
+        window.location.href = '/orders_history.html';
       });
 
       const map = await window.MapKit.initMap('map', [30.0444, 31.2357], 12);
@@ -211,6 +263,10 @@
       let quotedTrip = null;
       let currentOrder = null;
       let socket = null;
+      let pickupLabelValue = '';
+      let dropoffLabelValue = '';
+      let paymentModal = null;
+      let paymentPollTimer = null;
 
       const statusLabels = {
         CREATED: 'تم إنشاء الطلب',
@@ -230,6 +286,18 @@
         DRIVER_ASSIGNED: 'bg-blue-100 text-blue-600',
         IN_TRANSIT: 'bg-blue-100 text-blue-600',
         default: 'bg-amber-100 text-amber-600'
+      };
+
+      const paymentStatusLabels = {
+        paid: 'مدفوع إلكترونيًا',
+        failed: 'فشل الدفع',
+        pending: 'قيد المعالجة'
+      };
+
+      const paymentStatusClasses = {
+        paid: 'text-emerald-600',
+        failed: 'text-rose-600',
+        pending: 'text-amber-600'
       };
 
       function formatCoords(point) {
@@ -274,6 +342,8 @@
         priceLabel.textContent = '-';
         pickupLabel.textContent = 'لم يتم تحديد موقع الاستلام بعد.';
         dropoffLabel.textContent = 'لم يتم تحديد موقع التسليم بعد.';
+        pickupLabelValue = '';
+        dropoffLabelValue = '';
         confirmBtn.disabled = false;
         confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
       }
@@ -304,6 +374,9 @@
         orderCard.classList.add('hidden');
         cancelBtn.classList.add('hidden');
         newOrderBtn.classList.add('hidden');
+        paymentMethodRadios.forEach((radio) => {
+          radio.checked = radio.value === 'cash';
+        });
         currentOrder = null;
       }
 
@@ -331,6 +404,27 @@
           driverNameEl.textContent = 'جارٍ البحث عن أقرب مندوب متاح';
           driverVehicleEl.textContent = 'ستظهر التفاصيل فور التعيين';
           driverPhoneEl.textContent = '-';
+        }
+
+        const amountValue =
+          order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
+        orderAmountEl.textContent = amountValue != null ? `${amountValue.toFixed(2)} ر.س` : '-';
+        const methodLabel = order.paymentMethod === 'card' ? 'بطاقة (Paymob)' : 'دفع نقدي عند التسليم';
+        orderPaymentMethodEl.textContent = methodLabel;
+        const paymentStatusKey = String(order.paymentStatus || 'pending').toLowerCase();
+        orderPaymentStatusEl.textContent = paymentStatusLabels[paymentStatusKey] || paymentStatusKey;
+        orderPaymentStatusEl.className = `text-xs font-semibold ${
+          paymentStatusClasses[paymentStatusKey] || 'text-slate-600'
+        } mt-1`;
+        const showPayButton = order.paymentMethod === 'card' && paymentStatusKey !== 'paid';
+        payCardBtn.classList.toggle('hidden', !showPayButton);
+        if (paymentStatusKey === 'paid') {
+          closePaymentModal();
+          stopPaymentPolling();
+        }
+        if (paymentStatusKey === 'failed') {
+          stopPaymentPolling();
+          closePaymentModal();
         }
 
         const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
@@ -402,8 +496,8 @@
             km: result.km,
             minutes: result.minutes,
             price,
-            pickupLabel: pickupLabel.textContent,
-            dropoffLabel: dropoffLabel.textContent
+            pickupLabel: pickupLabelValue,
+            dropoffLabel: dropoffLabelValue
           };
           distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
           durationLabel.textContent = `${result.minutes} دقيقة`;
@@ -428,8 +522,10 @@
           ]);
           pickupPoint = { lat: pickupResult.lat, lng: pickupResult.lng };
           dropoffPoint = { lat: dropoffResult.lat, lng: dropoffResult.lng };
-          pickupLabel.textContent = `الاستلام: ${pickupResult.label}`;
-          dropoffLabel.textContent = `التسليم: ${dropoffResult.label}`;
+          pickupLabelValue = pickupResult.label;
+          dropoffLabelValue = dropoffResult.label;
+          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
+          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
           updateMarkers();
           await drawRoute();
         } catch (error) {
@@ -444,13 +540,22 @@
         }
         try {
           window.UI?.setLoading(confirmBtn, true, 'جارٍ إرسال الطلب...');
+          const selectedPaymentMethod =
+            paymentMethodRadios.find((radio) => radio.checked)?.value || 'cash';
+          const payload = {
+            pickup: { ...quotedTrip.pickup, label: quotedTrip.pickupLabel },
+            dropoff: { ...quotedTrip.dropoff, label: quotedTrip.dropoffLabel },
+            paymentMethod: selectedPaymentMethod,
+            pickupLabel: quotedTrip.pickupLabel,
+            dropoffLabel: quotedTrip.dropoffLabel
+          };
           const response = await fetch(`${config.API_BASE_URL}/api/orders`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${authToken}`
             },
-            body: JSON.stringify({ pickup: quotedTrip.pickup, dropoff: quotedTrip.dropoff })
+            body: JSON.stringify(payload)
           });
           const data = await response.json();
           if (!response.ok) {
@@ -462,6 +567,9 @@
           window.UI?.showToast('تم إرسال الطلب، نبحث عن أقرب مندوب...', 'success');
           subscribeToOrder(data.id);
           updateOrderUI(data);
+          if (selectedPaymentMethod === 'card') {
+            initiateCardPayment(data);
+          }
         } catch (error) {
           window.UI?.showToast(error.message || 'حدث خلل أثناء إنشاء الطلب.', 'error');
         } finally {
@@ -501,15 +609,23 @@
         resetAll();
       });
 
+      payCardBtn.addEventListener('click', () => {
+        if (currentOrder) {
+          initiateCardPayment(currentOrder);
+        }
+      });
+
       map.on('click', (event) => {
         if (!pickupPoint) {
           pickupPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
-          pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
+          pickupLabelValue = formatCoords(pickupPoint);
+          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
           pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
           updateMarkers();
         } else if (!dropoffPoint) {
           dropoffPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
-          dropoffLabel.textContent = `التسليم: ${formatCoords(dropoffPoint)}`;
+          dropoffLabelValue = formatCoords(dropoffPoint);
+          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
           dropoffInput.value = `${dropoffPoint.lat.toFixed(6)}, ${dropoffPoint.lng.toFixed(6)}`;
           updateMarkers();
         }
@@ -535,19 +651,38 @@
 
       function handleOrderEvent(order) {
         if (!order || !order.id) return;
+        const previousPaymentStatus = currentOrder?.paymentStatus;
         currentOrder = order;
         pickupPoint = order.pickup || pickupPoint;
         dropoffPoint = order.dropoff || dropoffPoint;
+        if (order.pickupLabel) {
+          pickupLabelValue = order.pickupLabel;
+          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
+        }
+        if (order.dropoffLabel) {
+          dropoffLabelValue = order.dropoffLabel;
+          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+        }
         updateMarkers();
         if (order.distanceKm && order.durationMin) {
           distanceLabel.textContent = `${Number(order.distanceKm).toFixed(2)} كم`;
           durationLabel.textContent = `${Number(order.durationMin).toFixed(0)} دقيقة`;
         }
-        if (order.price) {
-          priceLabel.textContent = `${Number(order.price).toFixed(2)} ر.س`;
+        const orderPrice =
+          order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
+        if (orderPrice != null) {
+          priceLabel.textContent = `${orderPrice.toFixed(2)} ر.س`;
           pricingCard.classList.remove('hidden');
         }
         updateOrderUI(order);
+        const newPaymentStatus = String(order.paymentStatus || '').toLowerCase();
+        if (previousPaymentStatus && previousPaymentStatus.toLowerCase() !== newPaymentStatus) {
+          if (newPaymentStatus === 'paid') {
+            window.UI?.showToast('تم تأكيد الدفع بنجاح.', 'success');
+          } else if (newPaymentStatus === 'failed') {
+            window.UI?.showToast('لم تكتمل عملية الدفع للطلب.', 'error');
+          }
+        }
       }
 
       function handleDriverLocation(payload) {
@@ -578,6 +713,122 @@
         window.MapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
       }
 
+      function stopPaymentPolling() {
+        if (paymentPollTimer) {
+          clearTimeout(paymentPollTimer);
+          paymentPollTimer = null;
+        }
+      }
+
+      function closePaymentModal() {
+        if (paymentModal) {
+          paymentModal.remove();
+          paymentModal = null;
+        }
+      }
+
+      function openPaymentModal(iframeUrl) {
+        closePaymentModal();
+        const wrapper = document.createElement('div');
+        wrapper.className = 'fixed inset-0 z-[9998] flex items-center justify-center bg-slate-900/80 backdrop-blur';
+        wrapper.innerHTML = `
+          <div class="bg-white rounded-3xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden">
+            <div class="px-5 py-4 flex items-center justify-between border-b border-slate-100">
+              <div class="flex items-center gap-2 text-slate-700 font-semibold">
+                <i class="ph ph-credit-card"></i>
+                <span>إتمام الدفع الإلكتروني</span>
+              </div>
+              <button type="button" data-close class="text-slate-400 hover:text-slate-600 transition">
+                <i class="ph ph-x"></i>
+              </button>
+            </div>
+            <iframe src="${iframeUrl}" class="w-full h-[520px]" frameborder="0" allow="payment" title="Paymob Checkout"></iframe>
+          </div>
+        `;
+        wrapper.addEventListener('click', (event) => {
+          if (event.target === wrapper) {
+            closePaymentModal();
+            stopPaymentPolling();
+          }
+        });
+        wrapper.querySelector('[data-close]')?.addEventListener('click', () => {
+          closePaymentModal();
+          stopPaymentPolling();
+        });
+        document.body.appendChild(wrapper);
+        paymentModal = wrapper;
+      }
+
+      function pollOrderPayment(orderId, attempt = 0) {
+        stopPaymentPolling();
+        paymentPollTimer = setTimeout(async () => {
+          try {
+            const response = await fetch(`${config.API_BASE_URL}/v1/orders/${orderId}`, {
+              headers: { Authorization: `Bearer ${authToken}` }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              currentOrder = data;
+              updateOrderUI(data);
+              const statusKey = String(data.paymentStatus || 'pending').toLowerCase();
+              if (statusKey === 'paid') {
+                window.UI?.showToast('تم تأكيد الدفع بنجاح.', 'success');
+                stopPaymentPolling();
+                closePaymentModal();
+                return;
+              }
+              if (statusKey === 'failed') {
+                window.UI?.showToast('لم تكتمل عملية الدفع، حاول مرة أخرى.', 'error');
+                stopPaymentPolling();
+                closePaymentModal();
+                return;
+              }
+            }
+          } catch (error) {
+            console.warn('Failed to poll payment status', error);
+          }
+          if (attempt < 40) {
+            pollOrderPayment(orderId, attempt + 1);
+          } else {
+            window.UI?.showToast('لم يتم تأكيد الدفع بعد، تحقق من السجل لاحقًا.', 'warning');
+            stopPaymentPolling();
+          }
+        }, 3000);
+      }
+
+      function startPaymentPolling(orderId) {
+        pollOrderPayment(orderId, 0);
+      }
+
+      async function initiateCardPayment(order) {
+        if (!order?.id) return;
+        try {
+          const response = await fetch(`${config.API_BASE_URL}/v1/pay/paymob/init`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ orderId: order.id })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || 'تعذر بدء عملية الدفع');
+          }
+          if (!data?.iframe_url) {
+            if (String(data?.status).toLowerCase() === 'paid') {
+              window.UI?.showToast('الطلب مدفوع بالفعل.', 'success');
+              return;
+            }
+            throw new Error('رابط الدفع غير متاح حاليًا.');
+          }
+          openPaymentModal(data.iframe_url);
+          startPaymentPolling(order.id);
+        } catch (error) {
+          window.UI?.showToast(error.message || 'فشل تهيئة الدفع الإلكتروني.', 'error');
+        }
+      }
+
       function setupSocket() {
         socket = io(config.API_BASE_URL, {
           transports: ['websocket'],
@@ -594,33 +845,56 @@
 
       async function resumeActiveOrder() {
         try {
-          const response = await fetch(`${config.API_BASE_URL}/api/orders/history`, {
+          const response = await fetch(`${config.API_BASE_URL}/v1/orders/my?role=customer`, {
             headers: { Authorization: `Bearer ${authToken}` }
           });
           if (!response.ok) return;
           const history = await response.json();
           if (!Array.isArray(history)) return;
-          const active = history.find((order) => !['DELIVERED', 'CANCELLED'].includes(order.status));
-          if (active) {
-            pickupPoint = active.pickup;
-            dropoffPoint = active.dropoff;
-            pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
-            dropoffLabel.textContent = `التسليم: ${formatCoords(dropoffPoint)}`;
-            updateMarkers();
-            try {
-              const result = await window.MapKit.routeAndEta(map, pickupPoint, dropoffPoint);
-              currentRouteControl = result.control;
-              distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
-              durationLabel.textContent = `${result.minutes} دقيقة`;
-              priceLabel.textContent = `${calculatePrice(result.km).toFixed(2)} ر.س`;
-              pricingCard.classList.remove('hidden');
-            } catch (error) {
-              console.warn('Failed to redraw route for active order', error);
-            }
-            currentOrder = active;
-            subscribeToOrder(active.id);
-            updateOrderUI(active);
+          const activeSummary = history.find((order) => !['DELIVERED', 'CANCELLED'].includes(order.status));
+          if (!activeSummary) return;
+
+          const detailsResponse = await fetch(`${config.API_BASE_URL}/v1/orders/${activeSummary.id}`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (!detailsResponse.ok) return;
+          const active = await detailsResponse.json();
+          pickupPoint = active.pickup;
+          dropoffPoint = active.dropoff;
+          if (active.pickupLabel) {
+            pickupLabelValue = active.pickupLabel;
+            pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
+          } else if (pickupPoint) {
+            pickupLabelValue = formatCoords(pickupPoint);
+            pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
           }
+          if (active.dropoffLabel) {
+            dropoffLabelValue = active.dropoffLabel;
+            dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+          } else if (dropoffPoint) {
+            dropoffLabelValue = formatCoords(dropoffPoint);
+            dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+          }
+          updateMarkers();
+          try {
+            const result = await window.MapKit.routeAndEta(map, pickupPoint, dropoffPoint);
+            currentRouteControl = result.control;
+            distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
+            durationLabel.textContent = `${result.minutes} دقيقة`;
+            const resumeAmount =
+              active.priceTotal != null
+                ? Number(active.priceTotal)
+                : active.price != null
+                ? Number(active.price)
+                : calculatePrice(result.km);
+            priceLabel.textContent = `${resumeAmount.toFixed(2)} ر.س`;
+            pricingCard.classList.remove('hidden');
+          } catch (error) {
+            console.warn('Failed to redraw route for active order', error);
+          }
+          currentOrder = active;
+          subscribeToOrder(active.id);
+          updateOrderUI(active);
         } catch (error) {
           console.warn('Failed to resume order', error);
         }

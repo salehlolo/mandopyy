@@ -17,73 +17,62 @@ afterAll(async () => {
   await closeDatabase();
 });
 
-describe('Email + password authentication', () => {
-  it('registers a user and allows them to log in with the issued JWT', async () => {
-    const email = 'integration@example.com';
-    const password = 'secret123';
+describe('Phone OTP authentication', () => {
+  it('issues an OTP and verifies a customer session', async () => {
+    const phoneNumber = '+201000000001';
 
-    const registerResponse = await request(app)
-      .post('/v1/auth/register')
-      .send({ email, password, name: 'Integration Tester' })
-      .expect(201);
-
-    expect(registerResponse.body).toHaveProperty('token');
-    expect(registerResponse.body).toHaveProperty('user');
-    expect(registerResponse.body.user.email).toBe(email);
-
-    const registerPayload = jwt.verify(registerResponse.body.token, CONFIG.jwtSecret);
-    expect(registerPayload).toHaveProperty('sub');
-
-    const loginResponse = await request(app)
-      .post('/v1/auth/login')
-      .send({ email, password })
+    const requestResponse = await request(app)
+      .post('/api/auth/otp/request')
+      .send({ phone: phoneNumber })
       .expect(200);
 
-    expect(loginResponse.body).toHaveProperty('token');
-    const loginPayload = jwt.verify(loginResponse.body.token, CONFIG.jwtSecret);
-    expect(loginPayload.sub).toBe(registerPayload.sub);
-  });
-});
+    expect(requestResponse.body).toMatchObject({ success: true });
+    expect(requestResponse.body.mock).toBe(true);
+    expect(requestResponse.body.code).toHaveLength(4);
 
-describe('OAuth callback redirects when providers are disabled', () => {
-  const baseUrl = 'http://localhost:3000';
-  const driverUrl = `${baseUrl}/driver_app.html`;
+    const verifyResponse = await request(app)
+      .post('/api/auth/otp/verify')
+      .send({ phone: phoneNumber, code: requestResponse.body.code, role: 'customer' })
+      .expect(200);
 
-  it('redirects Google callback to the default landing page with an error flag', async () => {
-    const response = await request(app)
-      .get('/v1/auth/google/callback')
-      .redirects(0)
-      .expect(302);
-
-    expect(response.headers.location).toBe(`${baseUrl}#login_error`);
+    expect(verifyResponse.body).toMatchObject({ success: true, role: 'customer' });
+    const payload = jwt.verify(verifyResponse.body.token, CONFIG.jwtSecret);
+    expect(payload).toHaveProperty('sub');
   });
 
-  it('redirects Google callback with state=driver to the driver app', async () => {
-    const response = await request(app)
-      .get('/v1/auth/google/callback')
-      .query({ state: 'driver' })
-      .redirects(0)
-      .expect(302);
+  it('upgrades user role when verifying as a driver', async () => {
+    const phoneNumber = '+201000000002';
 
-    expect(response.headers.location).toBe(`${driverUrl}#login_error`);
+    const requestResponse = await request(app)
+      .post('/api/auth/otp/request')
+      .send({ phone: phoneNumber })
+      .expect(200);
+
+    const verifyResponse = await request(app)
+      .post('/api/auth/otp/verify')
+      .send({ phone: phoneNumber, code: requestResponse.body.code, role: 'driver' })
+      .expect(200);
+
+    expect(verifyResponse.body.role).toBe('driver');
+    const payload = jwt.verify(verifyResponse.body.token, CONFIG.jwtSecret);
+    expect(payload).toMatchObject({ role: 'driver' });
   });
 
-  it('redirects Facebook callback to the default landing page with an error flag', async () => {
-    const response = await request(app)
-      .get('/v1/auth/facebook/callback')
-      .redirects(0)
-      .expect(302);
+  it('enforces rate limiting after repeated OTP requests', async () => {
+    const phoneNumber = '+201000000003';
 
-    expect(response.headers.location).toBe(`${baseUrl}#login_error`);
-  });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await request(app)
+        .post('/api/auth/otp/request')
+        .send({ phone: phoneNumber })
+        .expect(200);
+    }
 
-  it('redirects Facebook callback with state=driver to the driver app', async () => {
-    const response = await request(app)
-      .get('/v1/auth/facebook/callback')
-      .query({ state: 'driver' })
-      .redirects(0)
-      .expect(302);
+    const throttled = await request(app)
+      .post('/api/auth/otp/request')
+      .send({ phone: phoneNumber })
+      .expect(429);
 
-    expect(response.headers.location).toBe(`${driverUrl}#login_error`);
+    expect(throttled.body.message).toBeDefined();
   });
 });

@@ -13,52 +13,36 @@
   </style>
 </head>
 <body class="min-h-screen flex items-center justify-center px-4">
-  <div class="max-w-md w-full">
-    <div class="bg-white rounded-3xl shadow-xl px-7 py-8 space-y-6">
-      <div class="space-y-2 text-center">
+  <main class="max-w-md w-full">
+    <section class="bg-white rounded-3xl shadow-xl px-7 py-8 space-y-6">
+      <header class="space-y-2 text-center">
         <div class="inline-flex items-center justify-center gap-2 text-blue-600">
           <i class="ph ph-map-trifold text-2xl"></i>
           <span class="text-sm font-semibold uppercase tracking-wide">Waslny</span>
         </div>
-        <h1 id="form-title" class="text-2xl font-bold text-slate-800">مرحبًا بعودتك</h1>
-        <p id="form-hint" class="text-sm text-slate-500">سجّل الدخول ببريدك الإلكتروني وكلمة المرور للمتابعة.</p>
-      </div>
-
-      <div id="form-alert" class="hidden text-sm font-medium px-4 py-3 rounded-2xl"></div>
-
-      <div id="name-field" class="space-y-2 hidden">
-        <label for="name-input" class="text-xs font-semibold text-slate-500">الاسم الكامل</label>
-        <input id="name-input" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: أحمد محمد" autocomplete="name" />
-      </div>
+        <h1 class="text-2xl font-bold text-slate-800">تسجيل الدخول برقم الجوال</h1>
+        <p class="text-sm text-slate-500">أدخل رقمك الجوال لاستلام رمز التحقق لمرة واحدة (OTP).</p>
+      </header>
 
       <div class="space-y-2">
-        <label for="email-input" class="text-xs font-semibold text-slate-500">البريد الإلكتروني</label>
-        <input id="email-input" type="email" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="you@example.com" autocomplete="email" />
+        <label for="phone-input" class="text-xs font-semibold text-slate-500">رقم الجوال</label>
+        <input id="phone-input" type="tel" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: 01012345678" autocomplete="tel" />
+        <p id="otp-hint" class="text-xs text-slate-500 hidden">أرسلنا لك رمزاً مكوّناً من 4 أرقام. أدخله أدناه خلال 5 دقائق.</p>
       </div>
 
-      <div class="space-y-2">
-        <label for="password-input" class="text-xs font-semibold text-slate-500">كلمة المرور</label>
-        <input id="password-input" type="password" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="••••••••" autocomplete="current-password" />
+      <div id="otp-section" class="space-y-2 hidden">
+        <label for="otp-input" class="text-xs font-semibold text-slate-500">رمز التحقق</label>
+        <input id="otp-input" inputmode="numeric" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400 tracking-widest text-center" placeholder="____" />
       </div>
 
-      <button id="submit-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
-        <i class="ph ph-arrow-right"></i>
-        <span>تسجيل الدخول</span>
-      </button>
-
-      <div class="text-center text-sm text-slate-500">
-        <span id="toggle-message">ليس لديك حساب؟</span>
-        <button id="toggle-mode" class="text-blue-600 font-semibold hover:text-blue-700">إنشاء حساب جديد</button>
-      </div>
-
-      <div class="grid gap-3">
-        <button id="google-btn" class="w-full inline-flex items-center justify-center gap-3 border border-slate-200 rounded-2xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-          <i class="ph ph-google-logo"></i>
-          <span>الدخول عبر Google</span>
+      <div class="space-y-3">
+        <button id="send-otp-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
+          <i class="ph ph-paper-plane-right"></i>
+          <span>إرسال رمز التحقق</span>
         </button>
-        <button id="facebook-btn" class="w-full inline-flex items-center justify-center gap-3 border border-slate-200 rounded-2xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-          <i class="ph ph-facebook-logo"></i>
-          <span>الدخول عبر Facebook</span>
+        <button id="verify-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl py-3 transition">
+          <i class="ph ph-shield-check"></i>
+          <span>تأكيد الدخول</span>
         </button>
       </div>
 
@@ -72,128 +56,124 @@
           <span>لوحة المشرف</span>
         </button>
       </div>
-    </div>
-  </div>
+
+      <p class="text-center text-xs text-slate-500">يمكنك الوصول مباشرة إلى <a class="text-blue-600 font-semibold" href="/delivery_app.html">واجهة العميل</a> بعد تسجيل الدخول.</p>
+    </section>
+  </main>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const { API_BASE_URL } = window.__APP_CONFIG__ || {};
-      const alertBox = document.getElementById('form-alert');
-      const submitBtn = document.getElementById('submit-btn');
-      const toggleModeBtn = document.getElementById('toggle-mode');
-      const toggleMessage = document.getElementById('toggle-message');
-      const nameField = document.getElementById('name-field');
-      const nameInput = document.getElementById('name-input');
-      const emailInput = document.getElementById('email-input');
-      const passwordInput = document.getElementById('password-input');
-      const formTitle = document.getElementById('form-title');
-      const formHint = document.getElementById('form-hint');
-      const googleBtn = document.getElementById('google-btn');
-      const facebookBtn = document.getElementById('facebook-btn');
+      const ui = window.UI || {};
+
+      const phoneInput = document.getElementById('phone-input');
+      const otpInput = document.getElementById('otp-input');
+      const otpSection = document.getElementById('otp-section');
+      const otpHint = document.getElementById('otp-hint');
+      const sendBtn = document.getElementById('send-otp-btn');
+      const verifyBtn = document.getElementById('verify-btn');
       const driverBtn = document.getElementById('driver-btn');
       const adminBtn = document.getElementById('admin-btn');
 
-      let mode = 'login';
-
-      function setAlert(message, type = 'error') {
-        if (!message) {
-          alertBox.classList.add('hidden');
-          alertBox.textContent = '';
-          return;
-        }
-        alertBox.textContent = message;
-        alertBox.className = `text-sm font-medium px-4 py-3 rounded-2xl ${
-          type === 'success' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
-        }`;
-        alertBox.classList.remove('hidden');
-      }
-
-      function updateMode(nextMode) {
-        mode = nextMode;
-        if (mode === 'register') {
-          formTitle.textContent = 'إنشاء حساب جديد';
-          formHint.textContent = 'أدخل اسمك وبريدك الإلكتروني وكلمة المرور للبدء في طلب المندوب.';
-          submitBtn.innerHTML = '<i class="ph ph-user-plus"></i><span>إنشاء حساب</span>';
-          toggleMessage.textContent = 'لدي حساب مسبقًا؟';
-          toggleModeBtn.textContent = 'تسجيل الدخول';
-          nameField.classList.remove('hidden');
-          passwordInput.autocomplete = 'new-password';
+      function showToast(message, type = 'info') {
+        if (typeof ui.showToast === 'function') {
+          ui.showToast(message, type);
         } else {
-          formTitle.textContent = 'مرحبًا بعودتك';
-          formHint.textContent = 'سجّل الدخول ببريدك الإلكتروني وكلمة المرور للمتابعة.';
-          submitBtn.innerHTML = '<i class="ph ph-arrow-right"></i><span>تسجيل الدخول</span>';
-          toggleMessage.textContent = 'ليس لديك حساب؟';
-          toggleModeBtn.textContent = 'إنشاء حساب جديد';
-          nameField.classList.add('hidden');
-          passwordInput.autocomplete = 'current-password';
+          alert(message);
         }
-        setAlert('');
       }
 
-      async function submitForm() {
+      function setLoading(button, state, text) {
+        if (typeof ui.setLoading === 'function') {
+          ui.setLoading(button, state, text);
+        } else {
+          button.disabled = state;
+          if (state) {
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = text || '...';
+          } else if (button.dataset.originalText) {
+            button.innerHTML = button.dataset.originalText;
+            delete button.dataset.originalText;
+          }
+        }
+      }
+
+      async function requestOtp() {
         try {
           if (!API_BASE_URL) {
-            throw new Error('لم يتم ضبط مسار الخادم.');
+            throw new Error('لم يتم ضبط عنوان الخادم.');
           }
-          const email = (emailInput.value || '').trim().toLowerCase();
-          const password = passwordInput.value || '';
-          if (!email || !password) {
-            throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
+          const phone = (phoneInput.value || '').trim();
+          if (!phone) {
+            throw new Error('يرجى إدخال رقم الجوال.');
           }
-          submitBtn.disabled = true;
-          submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
-          const payload = { email, password };
-          if (mode === 'register') {
-            payload.name = (nameInput.value || '').trim();
-            if (!payload.name) {
-              throw new Error('الرجاء إدخال الاسم الكامل.');
-            }
-          }
-          const endpoint = mode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
-          const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          setLoading(sendBtn, true, 'جارٍ الإرسال...');
+          const response = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ phone })
           });
           const data = await response.json();
           if (!response.ok) {
-            throw new Error(data?.message || 'تعذر إتمام العملية.');
+            throw new Error(data?.message || 'تعذر إرسال رمز التحقق.');
+          }
+          otpSection.classList.remove('hidden');
+          otpHint.classList.remove('hidden');
+          verifyBtn.classList.remove('hidden');
+          otpInput.focus();
+          showToast(data.mock ? `رمز تجريبي: ${data.code}` : 'تم إرسال الرمز إلى جوالك.', 'success');
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ غير متوقع.', 'error');
+        } finally {
+          setLoading(sendBtn, false);
+        }
+      }
+
+      async function verifyOtp() {
+        try {
+          if (!API_BASE_URL) {
+            throw new Error('لم يتم ضبط عنوان الخادم.');
+          }
+          const phone = (phoneInput.value || '').trim();
+          const code = (otpInput.value || '').trim();
+          if (!phone || !code) {
+            throw new Error('يرجى إدخال رقم الجوال والرمز.');
+          }
+          setLoading(verifyBtn, true, 'جارٍ التحقق...');
+          const response = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone, code, role: 'customer' })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || 'تعذر التحقق من الرمز.');
           }
           if (data?.token) {
             localStorage.setItem('authToken', data.token);
-            setAlert('تم تسجيل الدخول بنجاح، سيتم تحويلك الآن...', 'success');
+            showToast('تم تسجيل الدخول بنجاح.', 'success');
             setTimeout(() => {
               window.location.href = '/delivery_app.html';
-            }, 600);
+            }, 400);
           } else {
             throw new Error('استجابة غير متوقعة من الخادم.');
           }
         } catch (error) {
-          setAlert(error.message || 'حدث خطأ غير متوقع.');
+          showToast(error.message || 'حدث خطأ غير متوقع.', 'error');
         } finally {
-          submitBtn.disabled = false;
-          submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+          setLoading(verifyBtn, false);
         }
       }
 
-      toggleModeBtn.addEventListener('click', () => {
-        updateMode(mode === 'login' ? 'register' : 'login');
-      });
-
-      submitBtn.addEventListener('click', submitForm);
-      passwordInput.addEventListener('keydown', (event) => {
+      sendBtn.addEventListener('click', requestOtp);
+      verifyBtn.addEventListener('click', verifyOtp);
+      otpInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
-          submitForm();
+          verifyOtp();
         }
       });
 
-      googleBtn.addEventListener('click', () => {
-        window.location.href = '/v1/auth/google';
-      });
-      facebookBtn.addEventListener('click', () => {
-        window.location.href = '/v1/auth/facebook';
-      });
       driverBtn.addEventListener('click', () => {
         window.location.href = '/driver_app.html';
       });
@@ -206,11 +186,8 @@
         if (token) {
           localStorage.setItem('authToken', token);
           window.location.replace('/delivery_app.html');
-          return;
         }
       }
-
-      updateMode(mode);
     });
   </script>
 </body>

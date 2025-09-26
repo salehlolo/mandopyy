@@ -52,36 +52,35 @@
 <body class="min-h-screen">
     <!-- Authentication -->
     <div id="auth-container" class="h-screen w-screen flex items-center justify-center p-4">
-        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-5">
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">
             <div class="text-center space-y-2">
                 <div class="flex items-center justify-center gap-2 text-blue-600">
                     <i class="ph ph-steering-wheel text-3xl"></i>
                     <h1 class="text-3xl font-bold">وصلني للسائقين</h1>
                 </div>
-                <p class="text-sm text-slate-500" id="auth-subtitle">سجّل دخولك لبدء استقبال الطلبات.</p>
+                <p class="text-sm text-slate-500">سجّل الدخول برقم جوالك لتتبع الطلبات واستلام المهام.</p>
             </div>
             <div id="auth-alert" class="hidden text-sm text-red-600 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-center"></div>
-            <div id="auth-name-group" class="space-y-2 hidden">
-                <label class="text-sm text-slate-600">الاسم الكامل</label>
-                <input id="auth-name" type="text" placeholder="مثال: أحمد السبيعي" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
             <div class="space-y-2">
-                <label class="text-sm text-slate-600">البريد الإلكتروني</label>
-                <input id="auth-email" type="email" placeholder="driver@example.com" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <label class="text-sm text-slate-600">رقم الجوال</label>
+                <input id="auth-phone" type="tel" placeholder="مثال: 01012345678" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" autocomplete="tel" />
+                <p id="auth-otp-hint" class="hidden text-xs text-slate-500">أدخل الرمز المرسل إليك خلال 5 دقائق.</p>
             </div>
-            <div class="space-y-2">
-                <label class="text-sm text-slate-600">كلمة المرور</label>
-                <input id="auth-password" type="password" placeholder="••••••••" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div id="auth-otp-group" class="space-y-2 hidden">
+                <label class="text-sm text-slate-600">رمز التحقق</label>
+                <input id="auth-otp" type="text" inputmode="numeric" maxlength="6" placeholder="____" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 tracking-widest text-center" />
             </div>
-            <button id="auth-submit" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition">تسجيل الدخول</button>
-            <p class="text-sm text-slate-500 text-center" id="auth-toggle-text">
-                <span id="auth-toggle-message">جديد في وصلني؟</span>
-                <button type="button" id="auth-toggle" class="text-blue-600 font-semibold">إنشاء حساب جديد</button>
-            </p>
-            <div class="grid gap-2">
-                <button id="auth-google" type="button" class="w-full border border-blue-100 text-slate-700 rounded-xl py-3 font-semibold hover:bg-blue-50 transition">الدخول عبر Google</button>
-                <button id="auth-facebook" type="button" class="w-full border border-blue-100 text-slate-700 rounded-xl py-3 font-semibold hover:bg-blue-50 transition">الدخول عبر Facebook</button>
+            <div class="space-y-3">
+                <button id="auth-send-otp" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition inline-flex items-center justify-center gap-2">
+                    <i class="ph ph-paper-plane-right"></i>
+                    <span>إرسال رمز التحقق</span>
+                </button>
+                <button id="auth-verify" class="hidden w-full bg-emerald-600 text-white font-semibold py-3 rounded-xl hover:bg-emerald-700 transition inline-flex items-center justify-center gap-2">
+                    <i class="ph ph-shield-check"></i>
+                    <span>تأكيد الدخول</span>
+                </button>
             </div>
+            <p class="text-xs text-slate-500 text-center">يمكنك العودة إلى صفحة <a href="/index.html" class="text-blue-600 font-semibold">تسجيل العملاء</a> من هنا.</p>
         </div>
     </div>
 
@@ -161,24 +160,26 @@
                         <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2"><i class="ph ph-navigation-arrow text-blue-600"></i>طلب نشط</h3>
                         <span id="order-status-chip" class="text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">جديد</span>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
-                        <div class="bg-slate-100 rounded-2xl p-3">
-                            <p class="text-xs text-slate-500 mb-1">نقطة الاستلام</p>
-                            <p id="order-pickup" class="font-semibold text-slate-800">-</p>
-                        </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
+                    <div class="bg-slate-100 rounded-2xl p-3">
+                        <p class="text-xs text-slate-500 mb-1">نقطة الاستلام</p>
+                        <p id="order-pickup" class="font-semibold text-slate-800">-</p>
+                    </div>
                         <div class="bg-slate-100 rounded-2xl p-3">
                             <p class="text-xs text-slate-500 mb-1">نقطة التسليم</p>
                             <p id="order-dropoff" class="font-semibold text-slate-800">-</p>
                         </div>
                         <div class="bg-slate-100 rounded-2xl p-3">
-                            <p class="text-xs text-slate-500 mb-1">بيانات العميل</p>
-                            <p id="order-customer" class="font-semibold text-slate-800">-</p>
-                        </div>
-                        <div class="bg-slate-100 rounded-2xl p-3">
-                            <p class="text-xs text-slate-500 mb-1">التسعيرة</p>
-                            <p id="order-price" class="font-semibold text-slate-800">-</p>
-                        </div>
+                        <p class="text-xs text-slate-500 mb-1">بيانات العميل</p>
+                        <p id="order-customer" class="font-semibold text-slate-800">-</p>
                     </div>
+                    <div class="bg-slate-100 rounded-2xl p-3">
+                        <p class="text-xs text-slate-500 mb-1">التسعيرة</p>
+                        <p id="order-price" class="font-semibold text-slate-800">-</p>
+                        <p id="order-payment-method" class="text-xs text-slate-500 mt-1">-</p>
+                        <p id="order-payment-status" class="text-xs text-slate-500 mt-1">-</p>
+                    </div>
+                </div>
                     <div class="flex flex-col md:flex-row gap-3">
                         <button id="mark-picked-btn" class="flex-1 bg-amber-500 text-white font-semibold py-3 rounded-2xl hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم الاستلام</button>
                         <button id="mark-delivered-btn" class="flex-1 bg-emerald-500 text-white font-semibold py-3 rounded-2xl hover:bg-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم التسليم</button>
@@ -193,16 +194,12 @@
         const authContainer = document.getElementById('auth-container');
         const appContainer = document.getElementById('app-container');
         const authAlert = document.getElementById('auth-alert');
-        const authSubmitBtn = document.getElementById('auth-submit');
-        const authToggleBtn = document.getElementById('auth-toggle');
-        const authToggleMessage = document.getElementById('auth-toggle-message');
-        const authSubtitle = document.getElementById('auth-subtitle');
-        const authNameGroup = document.getElementById('auth-name-group');
-        const authNameInput = document.getElementById('auth-name');
-        const authEmailInput = document.getElementById('auth-email');
-        const authPasswordInput = document.getElementById('auth-password');
-        const authGoogleBtn = document.getElementById('auth-google');
-        const authFacebookBtn = document.getElementById('auth-facebook');
+        const authPhoneInput = document.getElementById('auth-phone');
+        const authOtpGroup = document.getElementById('auth-otp-group');
+        const authOtpInput = document.getElementById('auth-otp');
+        const authOtpHint = document.getElementById('auth-otp-hint');
+        const authSendOtpBtn = document.getElementById('auth-send-otp');
+        const authVerifyBtn = document.getElementById('auth-verify');
 
         const driverNameHeader = document.getElementById('driver-name-header');
         const logoutBtn = document.getElementById('logout-btn');
@@ -226,12 +223,13 @@
         const orderDropoffEl = document.getElementById('order-dropoff');
         const orderCustomerEl = document.getElementById('order-customer');
         const orderPriceEl = document.getElementById('order-price');
+        const orderPaymentMethodEl = document.getElementById('order-payment-method');
+        const orderPaymentStatusEl = document.getElementById('order-payment-status');
         const markPickedBtn = document.getElementById('mark-picked-btn');
         const markDeliveredBtn = document.getElementById('mark-delivered-btn');
 
         const DRIVER_TOKEN_KEY = 'driverAuthToken';
         let authToken = localStorage.getItem(DRIVER_TOKEN_KEY) || '';
-        let authMode = 'login';
         let socket = null;
         let driverProfile = null;
         let activeOrder = null;
@@ -263,34 +261,15 @@
             }
         }
 
-        function updateAuthMode(nextMode) {
-            authMode = nextMode;
-            if (authMode === 'register') {
-                authNameGroup.classList.remove('hidden');
-                authSubmitBtn.textContent = 'إنشاء حساب';
-                authToggleMessage.textContent = 'لدي حساب مسبقًا؟';
-                authToggleBtn.textContent = 'تسجيل الدخول';
-                authSubtitle.textContent = 'أنشئ حسابًا جديدًا وقدم طلب الانضمام كسائق.';
-                authPasswordInput.setAttribute('autocomplete', 'new-password');
-            } else {
-                authNameGroup.classList.add('hidden');
-                authSubmitBtn.textContent = 'تسجيل الدخول';
-                authToggleMessage.textContent = 'جديد في وصلني؟';
-                authToggleBtn.textContent = 'إنشاء حساب جديد';
-                authSubtitle.textContent = 'سجّل دخولك لبدء استقبال الطلبات.';
-                authPasswordInput.setAttribute('autocomplete', 'current-password');
-            }
-            setAuthAlert('');
-        }
-
         function showAuthScreen(message) {
             stopLocationTracking();
             appContainer.classList.add('hidden');
             authContainer.classList.remove('hidden');
-            updateAuthMode('login');
-            authEmailInput.value = '';
-            authPasswordInput.value = '';
-            authNameInput.value = '';
+            authPhoneInput.value = '';
+            authOtpInput.value = '';
+            authOtpGroup.classList.add('hidden');
+            authOtpHint.classList.add('hidden');
+            authVerifyBtn.classList.add('hidden');
             if (message) {
                 setAuthAlert(message);
             } else {
@@ -314,19 +293,6 @@
                 socket = null;
             }
             showAuthScreen(message || 'انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
-        }
-
-        function applyOAuthTokenFromHash() {
-            if (location.hash.startsWith('#token=')) {
-                const tokenValue = decodeURIComponent(location.hash.slice(7));
-                if (tokenValue) {
-                    setAuthToken(tokenValue);
-                }
-                history.replaceState({}, document.title, location.pathname);
-            } else if (location.hash === '#login_error') {
-                setAuthAlert('تعذر تسجيل الدخول عبر الخدمة الخارجية. حاول طريقة أخرى.');
-                history.replaceState({}, document.title, location.pathname);
-            }
         }
 
         function showView(view) {
@@ -359,6 +325,10 @@
                 markDeliveredBtn.disabled = true;
                 delete markPickedBtn.dataset.nextStatus;
                 markPickedBtn.textContent = 'تم الاستلام';
+                orderPriceEl.textContent = '-';
+                orderPaymentMethodEl.textContent = '-';
+                orderPaymentStatusEl.textContent = '-';
+                orderPaymentStatusEl.className = 'text-xs text-slate-500 mt-1';
                 return;
             }
             activeOrderCard.classList.remove('hidden');
@@ -376,7 +346,25 @@
             orderPickupEl.textContent = `(${order.pickup.lat.toFixed(4)}, ${order.pickup.lng.toFixed(4)})`;
             orderDropoffEl.textContent = `(${order.dropoff.lat.toFixed(4)}, ${order.dropoff.lng.toFixed(4)})`;
             orderCustomerEl.textContent = `${order.customer?.phoneNumber || '-'} ${order.customer?.name ? ' - ' + order.customer.name : ''}`;
-            orderPriceEl.textContent = order.price ? `${Number(order.price).toFixed(2)} ر.س` : '-';
+            const orderAmount =
+                order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
+            orderPriceEl.textContent = orderAmount != null ? `${orderAmount.toFixed(2)} ر.س` : '-';
+            if (order.paymentMethod === 'card') {
+                const paymentMap = {
+                    paid: { text: 'مدفوع إلكترونيًا', className: 'text-emerald-600' },
+                    failed: { text: 'فشل الدفع', className: 'text-rose-600' },
+                    pending: { text: 'قيد المعالجة', className: 'text-amber-600' }
+                };
+                const paymentKey = String(order.paymentStatus || 'pending').toLowerCase();
+                const paymentInfo = paymentMap[paymentKey] || paymentMap.pending;
+                orderPaymentMethodEl.textContent = 'بطاقة (Paymob)';
+                orderPaymentStatusEl.textContent = paymentInfo.text;
+                orderPaymentStatusEl.className = `text-xs ${paymentInfo.className} mt-1`;
+            } else {
+                orderPaymentMethodEl.textContent = 'دفع نقدي عند التسليم';
+                orderPaymentStatusEl.textContent = 'يُسلَّم المبلغ عند اكتمال الطلب';
+                orderPaymentStatusEl.className = 'text-xs text-slate-500 mt-1';
+            }
             const progressConfig = {
                 DRIVER_ASSIGNED: { label: 'وصلت لنقطة الاستلام', status: 'DRIVER_ARRIVED_PICKUP' },
                 DRIVER_ARRIVED_PICKUP: { label: 'تم استلام الطلب', status: 'PICKED_UP' },
@@ -567,66 +555,77 @@
             });
         }
 
-        async function submitAuth() {
+        async function requestDriverOtp() {
             try {
                 if (!API_BASE_URL) {
                     throw new Error('إعداد الخادم غير مكتمل.');
                 }
-                const email = (authEmailInput.value || '').trim().toLowerCase();
-                const password = authPasswordInput.value || '';
-                if (!email || !password) {
-                    throw new Error('الرجاء إدخال البريد الإلكتروني وكلمة المرور.');
+                const phone = (authPhoneInput.value || '').trim();
+                if (!phone) {
+                    throw new Error('الرجاء إدخال رقم الجوال.');
                 }
-                const payload = { email, password };
-                if (authMode === 'register') {
-                    const name = (authNameInput.value || '').trim();
-                    if (!name) {
-                        throw new Error('الرجاء إدخال الاسم الكامل.');
-                    }
-                    payload.name = name;
-                }
-                authSubmitBtn.disabled = true;
-                const endpoint = authMode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                authSendOtpBtn.disabled = true;
+                const response = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ phone })
                 });
                 const data = await response.json();
                 if (!response.ok) {
-                    throw new Error(data?.message || 'تعذر إكمال العملية.');
+                    throw new Error(data?.message || 'تعذر إرسال رمز التحقق.');
+                }
+                authOtpGroup.classList.remove('hidden');
+                authOtpHint.classList.remove('hidden');
+                authVerifyBtn.classList.remove('hidden');
+                authOtpInput.focus();
+                setAuthAlert(data.mock ? `رمز تجريبي: ${data.code}` : 'تم إرسال الرمز إلى جوالك.', 'success');
+            } catch (error) {
+                setAuthAlert(error.message || 'حدث خطأ أثناء إرسال الرمز.');
+            } finally {
+                authSendOtpBtn.disabled = false;
+            }
+        }
+
+        async function verifyDriverOtp() {
+            try {
+                if (!API_BASE_URL) {
+                    throw new Error('إعداد الخادم غير مكتمل.');
+                }
+                const phone = (authPhoneInput.value || '').trim();
+                const code = (authOtpInput.value || '').trim();
+                if (!phone || !code) {
+                    throw new Error('الرجاء إدخال رقم الجوال والرمز.');
+                }
+                authVerifyBtn.disabled = true;
+                const response = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, code, role: 'driver' })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data?.message || 'تعذر التحقق من الرمز.');
                 }
                 if (!data?.token) {
                     throw new Error('استجابة غير متوقعة من الخادم.');
                 }
                 setAuthToken(data.token);
-                authEmailInput.value = '';
-                authPasswordInput.value = '';
-                authNameInput.value = '';
-                setAuthAlert('');
+                setAuthAlert('تم تسجيل الدخول بنجاح.', 'success');
                 await enterApp();
             } catch (error) {
-                setAuthAlert(error.message || 'حدث خطأ غير متوقع.');
+                setAuthAlert(error.message || 'حدث خطأ أثناء التحقق.');
             } finally {
-                authSubmitBtn.disabled = false;
+                authVerifyBtn.disabled = false;
             }
         }
 
-        authSubmitBtn.addEventListener('click', submitAuth);
-        authPasswordInput.addEventListener('keydown', (event) => {
+        authSendOtpBtn.addEventListener('click', requestDriverOtp);
+        authVerifyBtn.addEventListener('click', verifyDriverOtp);
+        authOtpInput.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                submitAuth();
+                verifyDriverOtp();
             }
-        });
-        authToggleBtn.addEventListener('click', () => {
-            updateAuthMode(authMode === 'login' ? 'register' : 'login');
-        });
-        authGoogleBtn.addEventListener('click', () => {
-            window.location.href = '/v1/auth/google?state=driver';
-        });
-        authFacebookBtn.addEventListener('click', () => {
-            window.location.href = '/v1/auth/facebook?state=driver';
         });
 
         registrationForm.addEventListener('submit', async (event) => {
@@ -683,8 +682,13 @@
             forceLogout('تم تسجيل الخروج بنجاح.');
         });
 
-        updateAuthMode(authMode);
-        applyOAuthTokenFromHash();
+        if (location.hash.startsWith('#token=')) {
+            const tokenValue = decodeURIComponent(location.hash.slice(7));
+            if (tokenValue) {
+                setAuthToken(tokenValue);
+            }
+            history.replaceState({}, document.title, location.pathname);
+        }
         if (authToken) {
             enterApp().catch(() => {
                 forceLogout('تعذر تسجيل الدخول. حاول مرة أخرى.');

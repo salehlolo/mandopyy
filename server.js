@@ -8,13 +8,10 @@ const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const http = require('http');
 const { Server } = require('socket.io');
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const session = require('express-session');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const FacebookStrategy = require('passport-facebook').Strategy;
 const rateLimit = require('express-rate-limit');
+const paymobService = require('./services/paymob');
+let twilioClient = null;
 
 // Centralised configuration so developers can clearly see which environment
 // variables drive runtime behaviour. Defaults keep local development working
@@ -30,6 +27,12 @@ const CONFIG = {
   nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
   maptilerKey: process.env.MAPTILER_KEY || '',
   mapboxToken: process.env.MAPBOX_TOKEN || '',
+  payProvider: process.env.PAY_PROVIDER || 'paymob',
+  paymobApiKey: process.env.PAYMOB_API_KEY || '',
+  paymobIntegrationIdCard: process.env.PAYMOB_INTEGRATION_ID_CARD || '',
+  paymobIframeId: process.env.PAYMOB_IFRAME_ID || '',
+  paymobHmacSecret: process.env.PAYMOB_HMAC_SECRET || '',
+  paymobBaseUrl: process.env.PAYMOB_BASE || 'https://accept.paymob.com',
   corsOrigins: (process.env.CORS_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -38,12 +41,30 @@ const CONFIG = {
   baseUrl: process.env.BASE_URL || `http://localhost:${rawPort}`,
   frontendUrl: process.env.FRONTEND_URL || `http://localhost:${rawPort}`,
   jwtSecret: process.env.JWT_SECRET || 'change-me',
-  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
-  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-  facebookAppId: process.env.FACEBOOK_APP_ID || '',
-  facebookAppSecret: process.env.FACEBOOK_APP_SECRET || '',
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
+  twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
   environment: process.env.NODE_ENV || 'development'
 };
+
+const paymobClient = paymobService.createClient({
+  apiKey: CONFIG.paymobApiKey,
+  baseUrl: CONFIG.paymobBaseUrl,
+  integrationId: CONFIG.paymobIntegrationIdCard,
+  iframeId: CONFIG.paymobIframeId
+});
+
+if (CONFIG.twilioAccountSid && CONFIG.twilioAuthToken && CONFIG.twilioFromNumber) {
+  try {
+    const twilio = require('twilio');
+    twilioClient = twilio(CONFIG.twilioAccountSid, CONFIG.twilioAuthToken);
+  } catch (error) {
+    console.warn('Failed to initialise Twilio client, falling back to mock OTP delivery.', error);
+    twilioClient = null;
+  }
+} else {
+  console.warn('Twilio credentials missing; OTP codes will be logged and returned in responses for development.');
+}
 
 const ORDER_STATUS = {
   CREATED: 'CREATED',
@@ -79,19 +100,6 @@ class HttpError extends Error {
 const app = express();
 app.use(helmet());
 app.use(express.json());
-app.use(
-  session({
-    secret: CONFIG.jwtSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production'
-    }
-  })
-);
-app.use(passport.initialize());
-app.use(passport.session());
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -103,6 +111,13 @@ const authLimiter = rateLimit({
 const quoteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const payLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -314,9 +329,41 @@ async function initDatabase() {
   await ensureColumn('orders', 'distance_km', 'distance_km REAL');
   await ensureColumn('orders', 'price', 'price REAL');
   await ensureColumn('orders', 'status', `status TEXT NOT NULL DEFAULT '${ORDER_STATUS.CREATED}'`);
+  await ensureColumn('orders', 'price_total', 'price_total REAL');
+  await ensureColumn('orders', 'payment_method', "payment_method TEXT DEFAULT 'cash'");
+  await ensureColumn('orders', 'payment_status', "payment_status TEXT DEFAULT 'pending'");
+  await ensureColumn('orders', 'pickup_label', 'pickup_label TEXT');
+  await ensureColumn('orders', 'dropoff_label', 'dropoff_label TEXT');
   await ensureColumn('drivers', 'availability_status', "availability_status TEXT DEFAULT 'offline'");
   await ensureColumn('drivers', 'last_lat', 'last_lat REAL');
   await ensureColumn('drivers', 'last_lng', 'last_lng REAL');
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT DEFAULT 'EGP',
+      status TEXT,
+      provider_ref TEXT,
+      raw TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders (id)
+    )`);
+
+  await dbRun('CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)');
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS otps (
+      phone TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      window_start INTEGER NOT NULL
+    )`);
 }
 
 
@@ -324,8 +371,8 @@ const driverSockets = new Map();
 const customerSockets = new Map();
 let adminToken = null;
 
-function normaliseEmail(value) {
-  return (value || '').trim().toLowerCase();
+function normalisePhone(value) {
+  return (value || '').replace(/[^+\d]/g, '').trim();
 }
 
 function signUserToken(user) {
@@ -345,121 +392,140 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+function verifyPaymobHmac(payload, secret) {
+  if (!payload || !payload.obj || !secret) {
+    return false;
+  }
+  const transaction = payload.obj;
+  const fields = [
+    'amount_cents',
+    'created_at',
+    'currency',
+    'error_occured',
+    'has_parent_transaction',
+    'id',
+    'integration_id',
+    'is_3d_secure',
+    'is_auth',
+    'is_capture',
+    'is_refunded',
+    'is_standalone_payment',
+    'is_voided',
+    'order.id',
+    'owner',
+    'pending',
+    'source_data.pan',
+    'source_data.sub_type',
+    'source_data.type',
+    'success'
+  ];
+  const toString = (value) => (value == null ? '' : String(value));
+  const concatenated = fields
+    .map((path) => {
+      const segments = path.split('.');
+      let value = transaction;
+      for (const segment of segments) {
+        value = value ? value[segment] : undefined;
+      }
+      return toString(value);
+    })
+    .join('');
+  const computed = crypto
+    .createHmac('sha512', secret)
+    .update(concatenated)
+    .digest('hex');
+  return computed === String(payload.hmac || '').toLowerCase();
+}
+
 async function getUserById(userId) {
   return dbGet('SELECT * FROM users WHERE id = ?', [userId]);
 }
 
-async function findUserByEmail(email) {
-  if (!email) {
-    return null;
-  }
-  return dbGet('SELECT * FROM users WHERE email = ?', [email]);
+async function getUserByPhone(phoneNumber) {
+  return dbGet('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
 }
 
-async function upsertOAuthUser({ provider, sub, email, name }) {
-  if (!provider || !sub) {
-    throw new Error('OAuth payload missing provider or subject');
-  }
-  const existingBySub = await dbGet(
-    'SELECT * FROM users WHERE oauth_provider = ? AND oauth_sub = ?',
-    [provider, sub]
-  );
-  if (existingBySub) {
-    if (email && !existingBySub.email) {
-      await dbRun('UPDATE users SET email = ? WHERE id = ?', [email, existingBySub.id]);
+async function ensureUserByPhone(phoneNumber, desiredRole = 'customer') {
+  const existing = await getUserByPhone(phoneNumber);
+  if (existing) {
+    if (desiredRole === 'driver' && existing.role !== 'driver') {
+      await dbRun('UPDATE users SET role = ? WHERE id = ?', ['driver', existing.id]);
+      return getUserById(existing.id);
     }
-    if (name && !existingBySub.name) {
-      await dbRun('UPDATE users SET name = ? WHERE id = ?', [name, existingBySub.id]);
-    }
-    return getUserById(existingBySub.id);
+    return existing;
   }
-
-  if (email) {
-    const existingByEmail = await findUserByEmail(email);
-    if (existingByEmail) {
-      await dbRun(
-        'UPDATE users SET oauth_provider = ?, oauth_sub = ? WHERE id = ?',
-        [provider, sub, existingByEmail.id]
-      );
-      if (name && !existingByEmail.name) {
-        await dbRun('UPDATE users SET name = ? WHERE id = ?', [name, existingByEmail.id]);
-      }
-      return getUserById(existingByEmail.id);
-    }
-  }
-
   const insert = await dbRun(
-    'INSERT INTO users (email, name, role, oauth_provider, oauth_sub) VALUES (?, ?, ?, ?, ?)',
-    [email || null, name || '', 'customer', provider, sub]
+    'INSERT INTO users (phone_number, role) VALUES (?, ?)',
+    [phoneNumber, desiredRole]
   );
   return getUserById(insert.lastID);
 }
 
-passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await getUserById(id);
-    done(null, user);
-  } catch (error) {
-    done(error);
-  }
-});
+const OTP_TTL_MS = 5 * 60 * 1000;
+const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const OTP_RATE_LIMIT_MAX = 3;
 
-if (CONFIG.googleClientId && CONFIG.googleClientSecret) {
-  passport.use(
-    new GoogleStrategy(
-      {
-        clientID: CONFIG.googleClientId,
-        clientSecret: CONFIG.googleClientSecret,
-        callbackURL: `${CONFIG.baseUrl}/v1/auth/google/callback`
-      },
-      async (accessToken, refreshToken, profile, done) => {
-        try {
-          const primaryEmail = profile.emails?.[0]?.value;
-          const user = await upsertOAuthUser({
-            provider: 'google',
-            sub: profile.id,
-            email: primaryEmail ? normaliseEmail(primaryEmail) : null,
-            name: profile.displayName
-          });
-          done(null, user);
-        } catch (error) {
-          done(error);
-        }
-      }
-    )
+async function upsertOtp(phoneNumber, code, expiresAt) {
+  await dbRun(
+    `INSERT INTO otps (phone, code, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(phone) DO UPDATE SET code = excluded.code, expires_at = excluded.expires_at`,
+    [phoneNumber, code, expiresAt]
   );
-} else {
-  console.warn('Google OAuth credentials are not configured; Google login is disabled.');
 }
 
-if (CONFIG.facebookAppId && CONFIG.facebookAppSecret) {
-  passport.use(
-    new FacebookStrategy(
-      {
-        clientID: CONFIG.facebookAppId,
-        clientSecret: CONFIG.facebookAppSecret,
-        callbackURL: `${CONFIG.baseUrl}/v1/auth/facebook/callback`,
-        profileFields: ['id', 'displayName', 'emails']
-      },
-      async (accessToken, refreshToken, profile, done) => {
-        try {
-          const primaryEmail = profile.emails?.[0]?.value;
-          const user = await upsertOAuthUser({
-            provider: 'facebook',
-            sub: profile.id,
-            email: primaryEmail ? normaliseEmail(primaryEmail) : null,
-            name: profile.displayName
-          });
-          done(null, user);
-        } catch (error) {
-          done(error);
-        }
-      }
-    )
-  );
-} else {
-  console.warn('Facebook OAuth credentials are not configured; Facebook login is disabled.');
+async function consumeOtp(phoneNumber, code) {
+  const record = await dbGet('SELECT code, expires_at FROM otps WHERE phone = ?', [phoneNumber]);
+  if (!record) {
+    return { valid: false, reason: 'OTP_NOT_FOUND' };
+  }
+  if (Number(record.expires_at) < Date.now()) {
+    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+    return { valid: false, reason: 'OTP_EXPIRED' };
+  }
+  const matches = String(record.code) === String(code);
+  if (matches) {
+    await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+  }
+  return { valid: matches, reason: matches ? 'OK' : 'OTP_MISMATCH' };
+}
+
+async function incrementRateLimit(key, limit, windowMs) {
+  const now = Date.now();
+  const existing = await dbGet('SELECT count, window_start FROM rate_limits WHERE key = ?', [key]);
+  if (!existing) {
+    await dbRun('INSERT INTO rate_limits (key, count, window_start) VALUES (?, ?, ?)', [key, 1, now]);
+    return { allowed: true, remaining: limit - 1 };
+  }
+  const windowStart = Number(existing.window_start);
+  if (now - windowStart > windowMs) {
+    await dbRun('UPDATE rate_limits SET count = ?, window_start = ? WHERE key = ?', [1, now, key]);
+    return { allowed: true, remaining: limit - 1 };
+  }
+  const nextCount = Number(existing.count) + 1;
+  await dbRun('UPDATE rate_limits SET count = ? WHERE key = ?', [nextCount, key]);
+  if (nextCount > limit) {
+    return { allowed: false, remaining: 0 };
+  }
+  return { allowed: true, remaining: limit - nextCount };
+}
+
+async function sendOtpSms(phoneNumber, code) {
+  if (!twilioClient || !CONFIG.twilioFromNumber) {
+    console.info(`[OTP] Mock code for ${phoneNumber}: ${code}`);
+    return { delivered: false, mock: true };
+  }
+  try {
+    await twilioClient.messages.create({
+      to: phoneNumber,
+      from: CONFIG.twilioFromNumber,
+      body: `رمز التحقق الخاص بك في Waslny هو ${code}`
+    });
+    return { delivered: true, mock: false };
+  } catch (error) {
+    console.error('Failed to send OTP via Twilio', error);
+    return { delivered: false, mock: true };
+  }
 }
 
 async function getDriverById(userId) {
@@ -488,8 +554,18 @@ async function getOrderDetails(orderId) {
     id: row.id,
     status: row.status,
     price: row.price != null ? Number(row.price) : null,
+    priceTotal:
+      row.price_total != null
+        ? Number(row.price_total)
+        : row.price != null
+        ? Number(row.price)
+        : null,
     distanceKm: row.distance_km != null ? Number(row.distance_km) : null,
     createdAt: row.created_at,
+    paymentMethod: row.payment_method || 'cash',
+    paymentStatus: row.payment_status || 'pending',
+    pickupLabel: row.pickup_label || null,
+    dropoffLabel: row.dropoff_label || null,
     pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
     dropoff: { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) },
     customer: {
@@ -559,7 +635,8 @@ async function quoteTrip(pickup, dropoff) {
   return {
     distanceKm: Number(distanceKm.toFixed(2)),
     durationMin: Number(durationMin.toFixed(0)),
-    price: Number(price.toFixed(2))
+    price: Number(price.toFixed(2)),
+    priceTotal: Number(price.toFixed(2))
   };
 }
 
@@ -628,6 +705,9 @@ async function assignDriverToOrder(orderId) {
       ORDER_STATUS.CANCELLED,
       orderId
     ]);
+    if ((order.payment_method || 'cash').toLowerCase() === 'card') {
+      await dbRun('UPDATE orders SET payment_status = ? WHERE id = ?', ['failed', orderId]);
+    }
     const details = await getOrderDetails(orderId);
     const payload = details
       ? { ...details, reason: 'NO_DRIVER' }
@@ -672,7 +752,6 @@ async function assignPendingOrders() {
 }
 
 // --- Configuration endpoint shared by the three front-ends ---
-app.use('/v1/auth', authLimiter);
 app.use('/api/quote', quoteLimiter);
 
 app.get('/config.js', (req, res) => {
@@ -685,7 +764,8 @@ app.get('/config.js', (req, res) => {
     NOMINATIM_URL: CONFIG.nominatimUrl,
     MAPTILER_KEY: CONFIG.maptilerKey,
     MAPBOX_TOKEN: CONFIG.mapboxToken,
-    NODE_ENV: CONFIG.environment
+    NODE_ENV: CONFIG.environment,
+    PAY_PROVIDER: CONFIG.payProvider
   })};`);
 });
 
@@ -699,138 +779,79 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-// --- Authentication Endpoints ---
-app.post('/v1/auth/register', async (req, res, next) => {
-  try {
-    const { email, password, name } = req.body || {};
-    const normalisedEmail = normaliseEmail(email);
-    if (!normalisedEmail) {
-      throw new HttpError(400, 'Email is required');
-    }
-    if (!password || password.length < 6) {
-      throw new HttpError(400, 'Password must be at least 6 characters long');
-    }
-
-    const existing = await findUserByEmail(normalisedEmail);
-    if (existing) {
-      throw new HttpError(409, 'Email is already registered');
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const insert = await dbRun(
-      'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)',
-      [normalisedEmail, passwordHash, name || '', 'customer']
-    );
-    const user = await getUserById(insert.lastID);
-    const token = signUserToken(user);
-    res.status(201).json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
+// --- Authentication Endpoints (OTP only) ---
+const otpRequestHandlers = ['/api/auth/otp/request', '/v1/auth/otp/request'];
+otpRequestHandlers.forEach((route) => {
+  app.post(route, authLimiter, async (req, res, next) => {
+    try {
+      const { phone } = req.body || {};
+      const normalised = normalisePhone(phone);
+      if (!normalised || normalised.length < 6) {
+        throw new HttpError(400, 'رقم الجوال غير صالح');
       }
-    });
-  } catch (error) {
-    next(error);
-  }
+
+      const rateKey = `otp:${normalised}`;
+      const { allowed } = await incrementRateLimit(
+        rateKey,
+        OTP_RATE_LIMIT_MAX,
+        OTP_RATE_LIMIT_WINDOW_MS
+      );
+      if (!allowed) {
+        throw new HttpError(429, 'تم تجاوز الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
+      }
+
+      const code = String(Math.floor(1000 + Math.random() * 9000));
+      const expiresAt = Date.now() + OTP_TTL_MS;
+      await upsertOtp(normalised, code, expiresAt);
+      const delivery = await sendOtpSms(normalised, code);
+
+      res.json({
+        success: true,
+        mock: delivery.mock,
+        expiresIn: Math.floor(OTP_TTL_MS / 1000),
+        code: delivery.mock ? code : undefined
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 });
 
-app.post('/v1/auth/login', async (req, res, next) => {
-  try {
-    const { email, password } = req.body || {};
-    const normalisedEmail = normaliseEmail(email);
-    if (!normalisedEmail || !password) {
-      throw new HttpError(400, 'Email and password are required');
-    }
-    const user = await findUserByEmail(normalisedEmail);
-    if (!user || !user.password_hash) {
-      throw new HttpError(400, 'Invalid credentials');
-    }
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
-      throw new HttpError(400, 'Invalid credentials');
-    }
-    const token = signUserToken(user);
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
+const otpVerifyHandlers = ['/api/auth/otp/verify', '/v1/auth/otp/verify'];
+otpVerifyHandlers.forEach((route) => {
+  app.post(route, authLimiter, async (req, res, next) => {
+    try {
+      const { phone, code, role } = req.body || {};
+      const normalised = normalisePhone(phone);
+      if (!normalised || normalised.length < 6) {
+        throw new HttpError(400, 'رقم الجوال غير صالح');
       }
-    });
-  } catch (error) {
-    next(error);
-  }
+      if (!code || String(code).trim().length < 4) {
+        throw new HttpError(400, 'رمز التحقق مطلوب');
+      }
+
+      const validation = await consumeOtp(normalised, String(code).trim());
+      if (!validation.valid) {
+        throw new HttpError(400, 'رمز التحقق غير صحيح أو منتهي الصلاحية');
+      }
+
+      const desiredRole = String(role || 'customer').toLowerCase() === 'driver' ? 'driver' : 'customer';
+      const user = await ensureUserByPhone(normalised, desiredRole);
+      await dbRun('UPDATE users SET phone_number = ? WHERE id = ?', [normalised, user.id]);
+      const token = signUserToken(user);
+      const driver = await getDriverById(user.id);
+
+      res.json({
+        success: true,
+        token,
+        role: user.role,
+        isDriverVerified: driver ? Boolean(driver.verified) : null
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 });
-
-if (CONFIG.googleClientId && CONFIG.googleClientSecret) {
-  app.get('/v1/auth/google', (req, res, next) => {
-    const state = req.query.state;
-    passport.authenticate('google', {
-      scope: ['profile', 'email'],
-      state
-    })(req, res, next);
-  });
-  app.get(
-    '/v1/auth/google/callback',
-    passport.authenticate('google', {
-      failureRedirect: `${CONFIG.frontendUrl}/#login_error`
-    }),
-    (req, res) => {
-      const redirectState = req.query.state;
-      const base = CONFIG.frontendUrl.replace(/\/$/, '');
-      const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
-      const token = signUserToken(req.user);
-      res.redirect(`${target}#token=${encodeURIComponent(token)}`);
-    }
-  );
-} else {
-  app.get('/v1/auth/google', (req, res) => {
-    res.status(503).json({ message: 'Google login is not configured' });
-  });
-  app.get('/v1/auth/google/callback', (req, res) => {
-    const redirectState = req.query.state;
-    const base = CONFIG.frontendUrl.replace(/\/$/, '');
-    const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
-    res.redirect(`${target}#login_error`);
-  });
-}
-
-if (CONFIG.facebookAppId && CONFIG.facebookAppSecret) {
-  app.get('/v1/auth/facebook', (req, res, next) => {
-    const state = req.query.state;
-    passport.authenticate('facebook', { scope: ['email'], state })(req, res, next);
-  });
-  app.get(
-    '/v1/auth/facebook/callback',
-    passport.authenticate('facebook', {
-      failureRedirect: `${CONFIG.frontendUrl}/#login_error`
-    }),
-    (req, res) => {
-      const redirectState = req.query.state;
-      const base = CONFIG.frontendUrl.replace(/\/$/, '');
-      const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
-      const token = signUserToken(req.user);
-      res.redirect(`${target}#token=${encodeURIComponent(token)}`);
-    }
-  );
-} else {
-  app.get('/v1/auth/facebook', (req, res) => {
-    res.status(503).json({ message: 'Facebook login is not configured' });
-  });
-  app.get('/v1/auth/facebook/callback', (req, res) => {
-    const redirectState = req.query.state;
-    const base = CONFIG.frontendUrl.replace(/\/$/, '');
-    const target = redirectState === 'driver' ? `${base}/driver_app.html` : base;
-    res.redirect(`${target}#login_error`);
-  });
-}
 
 // --- Auth middleware ---
 async function authenticate(req, res, next) {
@@ -996,16 +1017,40 @@ app.post('/api/quote', authenticate, async (req, res, next) => {
 
 app.post('/api/orders', authenticate, async (req, res, next) => {
   try {
-    const { pickup, dropoff } = req.body || {};
+    const { pickup, dropoff, paymentMethod: paymentMethodRaw } = req.body || {};
     if (!pickup || !dropoff) {
       throw new HttpError(400, 'Pickup and dropoff locations are required');
     }
 
     const quote = await quoteTrip(pickup, dropoff);
 
+    const paymentMethod = (paymentMethodRaw || 'cash').toLowerCase();
+    if (!['cash', 'card'].includes(paymentMethod)) {
+      throw new HttpError(400, 'Unsupported payment method');
+    }
+
+    const pickupLabel = pickup.label || req.body?.pickupLabel || null;
+    const dropoffLabel = dropoff.label || req.body?.dropoffLabel || null;
+    const paymentStatus = paymentMethod === 'card' ? 'pending' : 'pending';
+    const priceTotal = quote.price;
+
     const insert = await dbRun(
-      `INSERT INTO orders (customer_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, price, distance_km, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO orders (
+          customer_id,
+          pickup_lat,
+          pickup_lng,
+          dropoff_lat,
+          dropoff_lng,
+          price,
+          price_total,
+          distance_km,
+          status,
+          payment_method,
+          payment_status,
+          pickup_label,
+          dropoff_label
+        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.user.id,
         pickup.lat,
@@ -1013,8 +1058,13 @@ app.post('/api/orders', authenticate, async (req, res, next) => {
         dropoff.lat,
         dropoff.lng,
         quote.price,
+        priceTotal,
         quote.distanceKm,
-        ORDER_STATUS.CREATED
+        ORDER_STATUS.CREATED,
+        paymentMethod,
+        paymentStatus,
+        pickupLabel,
+        dropoffLabel
       ]
     );
 
@@ -1086,6 +1136,217 @@ app.get('/api/orders/history', authenticate, async (req, res, next) => {
       }
     }
     res.json(history);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/orders/my', authenticate, async (req, res, next) => {
+  try {
+    const role = (req.query.role || req.user.role || 'customer').toLowerCase();
+    let rows;
+    if (role === 'driver') {
+      rows = await dbAll(
+        `SELECT id, status, price_total, price, payment_method, payment_status, created_at, pickup_label, dropoff_label
+           FROM orders
+          WHERE driver_id = ?
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [req.user.id]
+      );
+    } else {
+      rows = await dbAll(
+        `SELECT id, status, price_total, price, payment_method, payment_status, created_at, pickup_label, dropoff_label
+           FROM orders
+          WHERE customer_id = ?
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [req.user.id]
+      );
+    }
+    const history = rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      priceTotal:
+        row.price_total != null
+          ? Number(row.price_total)
+          : row.price != null
+          ? Number(row.price)
+          : null,
+      paymentMethod: row.payment_method || 'cash',
+      paymentStatus: row.payment_status || 'pending',
+      createdAt: row.created_at,
+      pickupLabel: row.pickup_label || null,
+      dropoffLabel: row.dropoff_label || null
+    }));
+    res.json(history);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/orders/:id', authenticate, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isFinite(orderId)) {
+      throw new HttpError(400, 'Invalid order id');
+    }
+    const details = await getOrderDetails(orderId);
+    if (!details) {
+      throw new HttpError(404, 'Order not found');
+    }
+    const isCustomer = details.customer.id === req.user.id;
+    const isDriver = details.driver?.id === req.user.id;
+    if (!isCustomer && !isDriver) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/pay/paymob/init', authenticate, payLimiter, async (req, res, next) => {
+  try {
+    if (CONFIG.payProvider !== 'paymob') {
+      throw new HttpError(503, 'Card payments are not enabled');
+    }
+    if (!CONFIG.paymobApiKey || !CONFIG.paymobIntegrationIdCard || !CONFIG.paymobIframeId) {
+      throw new HttpError(503, 'Paymob credentials are not fully configured');
+    }
+    const { orderId } = req.body || {};
+    const numericOrderId = Number(orderId);
+    if (!Number.isFinite(numericOrderId)) {
+      throw new HttpError(400, 'A valid orderId is required');
+    }
+    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [numericOrderId]);
+    if (!order) {
+      throw new HttpError(404, 'Order not found');
+    }
+    if (order.customer_id !== req.user.id) {
+      throw new HttpError(403, 'You can only pay for your own orders');
+    }
+    const method = (order.payment_method || 'cash').toLowerCase();
+    if (method !== 'card') {
+      throw new HttpError(400, 'This order is not configured for card payment');
+    }
+    if (order.payment_status === 'paid') {
+      return res.json({ iframe_url: null, status: 'paid' });
+    }
+    const priceSource =
+      order.price_total != null
+        ? Number(order.price_total)
+        : order.price != null
+        ? Number(order.price)
+        : null;
+    if (!Number.isFinite(priceSource) || priceSource <= 0) {
+      throw new HttpError(400, 'Order amount is not valid for payment');
+    }
+    const amountCents = Math.max(1, Math.round(priceSource * 100));
+    const authToken = await paymobClient.getAuthToken();
+    const merchantOrderId = `order-${numericOrderId}-${Date.now()}`;
+    const paymobOrder = await paymobClient.createOrder(authToken, amountCents, merchantOrderId);
+    const billingName = (req.user.name || 'Waslny Customer').split(' ');
+    const billingData = {
+      apartment: 'NA',
+      email: req.user.email || `${req.user.id}@waslny.local`,
+      floor: 'NA',
+      first_name: billingName[0] || 'Waslny',
+      street: order.pickup_label || 'Pickup',
+      building: 'NA',
+      phone_number: req.user.phone_number || '0000000000',
+      shipping_method: 'Courier',
+      postal_code: '00000',
+      city: 'Cairo',
+      country: 'EGY',
+      last_name: billingName.slice(1).join(' ') || 'Customer',
+      state: 'Cairo'
+    };
+    const paymentToken = await paymobClient.getPaymentKey(authToken, {
+      orderId: paymobOrder.id,
+      amountCents,
+      billingData,
+      integrationId: CONFIG.paymobIntegrationIdCard
+    });
+    const iframeUrl = paymobClient.buildIframeUrl(paymentToken);
+
+    await dbRun(
+      'INSERT INTO payments (order_id, provider, amount_cents, currency, status, provider_ref, raw) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [
+        numericOrderId,
+        'paymob',
+        amountCents,
+        'EGP',
+        'pending',
+        String(paymobOrder.id),
+        JSON.stringify({ order: paymobOrder })
+      ]
+    );
+
+    await dbRun('UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?', [
+      'pending',
+      'card',
+      numericOrderId
+    ]);
+
+    res.json({ iframe_url: iframeUrl, payment_token: paymentToken });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/pay/paymob/webhook', async (req, res, next) => {
+  try {
+    if (CONFIG.payProvider !== 'paymob') {
+      return res.json({ ok: true });
+    }
+    if (!verifyPaymobHmac(req.body, CONFIG.paymobHmacSecret)) {
+      throw new HttpError(401, 'Invalid signature');
+    }
+    const transaction = req.body.obj;
+    const paymobOrderId = transaction?.order?.id ? String(transaction.order.id) : null;
+    let orderId = null;
+    const merchantOrderId = transaction?.order?.merchant_order_id;
+    if (merchantOrderId) {
+      const match = String(merchantOrderId).match(/order-(\d+)/);
+      if (match) {
+        orderId = Number(match[1]);
+      }
+    }
+    if (!orderId && paymobOrderId) {
+      const paymentRow = await dbGet(
+        'SELECT order_id FROM payments WHERE provider = ? AND provider_ref = ? ORDER BY id DESC LIMIT 1',
+        ['paymob', paymobOrderId]
+      );
+      if (paymentRow) {
+        orderId = Number(paymentRow.order_id);
+      }
+    }
+    if (!orderId) {
+      throw new HttpError(404, 'Order reference not found');
+    }
+    const success = transaction?.success === true && transaction?.pending === false;
+    const status = success ? 'paid' : 'failed';
+    const rawJson = JSON.stringify(transaction);
+    if (paymobOrderId) {
+      const update = await dbRun(
+        'UPDATE payments SET status = ?, raw = ? WHERE provider = ? AND provider_ref = ?',
+        [status, rawJson, 'paymob', paymobOrderId]
+      );
+      if (!update.changes) {
+        await dbRun(
+          'INSERT INTO payments (order_id, provider, amount_cents, currency, status, provider_ref, raw) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [orderId, 'paymob', Number(transaction.amount_cents || 0), transaction.currency || 'EGP', status, paymobOrderId, rawJson]
+        );
+      }
+    }
+    await dbRun('UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?', [
+      status,
+      'card',
+      orderId
+    ]);
+    await emitOrderStatus(orderId);
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -1177,6 +1438,34 @@ app.post('/api/admin/drivers/:id/verify', authenticateAdmin, async (req, res, ne
       await assignPendingOrders();
     }
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/payments', authenticateAdmin, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, order_id, provider, amount_cents, currency, status, provider_ref, created_at
+         FROM payments
+        ORDER BY created_at DESC
+        LIMIT 100`
+    );
+    const list = rows.map((row) => {
+      const amountCents = Number(row.amount_cents || 0);
+      return {
+        id: row.id,
+        orderId: row.order_id,
+        provider: row.provider,
+        amount: amountCents / 100,
+        amountCents,
+        currency: row.currency || 'EGP',
+        status: row.status || 'pending',
+        providerRef: row.provider_ref || null,
+        createdAt: row.created_at
+      };
+    });
+    res.json(list);
   } catch (error) {
     next(error);
   }

@@ -109,6 +109,27 @@
           </table>
         </div>
       </section>
+
+      <section class="bg-white rounded-3xl shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-slate-800">الدفعات الإلكترونية</h3>
+          <span id="payments-count" class="text-xs text-slate-400">0 عملية</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-100 text-sm text-slate-700">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3 text-right">الطلب</th>
+                <th class="px-4 py-3 text-right">المبلغ</th>
+                <th class="px-4 py-3 text-right">المزوّد</th>
+                <th class="px-4 py-3 text-right">حالة الدفع</th>
+                <th class="px-4 py-3 text-right">التاريخ</th>
+              </tr>
+            </thead>
+            <tbody id="payments-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -124,12 +145,15 @@
       const driversBody = document.getElementById('drivers-body');
       const driversCount = document.getElementById('drivers-count');
       const mapHint = document.getElementById('map-hint');
+      const paymentsBody = document.getElementById('payments-body');
+      const paymentsCount = document.getElementById('payments-count');
 
       const verifiedFilters = Array.from(document.querySelectorAll('.filter-verified'));
       const availabilityFilters = Array.from(document.querySelectorAll('.filter-availability'));
 
       let adminToken = sessionStorage.getItem('waslny_admin_token') || '';
       let drivers = [];
+      let payments = [];
       let filterVerified = 'all';
       let filterAvailability = 'all';
       let mapInstance = null;
@@ -196,6 +220,33 @@
         updateMapMarkers(filtered);
       }
 
+      function renderPayments() {
+        paymentsBody.innerHTML = '';
+        paymentsCount.textContent = `${payments.length} عملية`;
+        if (!payments.length) {
+          paymentsBody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">لا توجد عمليات دفع مسجلة بعد.</td></tr>';
+          return;
+        }
+        payments.forEach((payment) => {
+          const row = document.createElement('tr');
+          row.className = 'hover:bg-slate-50 transition';
+          const statusKey = String(payment.status || 'pending').toLowerCase();
+          const statusBadge = {
+            paid: '<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-check-circle"></i>مدفوع</span>',
+            failed: '<span class="inline-flex items-center gap-1 bg-rose-100 text-rose-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-x-circle"></i>فشل</span>',
+            pending: '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-clock"></i>قيد المعالجة</span>'
+          };
+          row.innerHTML = `
+            <td class="px-4 py-3">#${payment.orderId}</td>
+            <td class="px-4 py-3">${(payment.amount ?? 0).toFixed(2)} ${payment.currency || 'EGP'}</td>
+            <td class="px-4 py-3 uppercase">${payment.provider || '-'}</td>
+            <td class="px-4 py-3">${statusBadge[statusKey] || statusBadge.pending}</td>
+            <td class="px-4 py-3 text-slate-500 text-xs">${new Date(payment.createdAt).toLocaleString('ar-EG')}</td>
+          `;
+          paymentsBody.appendChild(row);
+        });
+      }
+
       function clearMapMarkers() {
         if (!mapMarkers.length) return;
         mapMarkers.forEach((marker) => marker.remove());
@@ -250,6 +301,26 @@
         }
       }
 
+      async function loadPayments() {
+        if (!adminToken) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/admin/payments`, {
+            headers: { Authorization: `Bearer ${adminToken}` }
+          });
+          if (response.status === 401) {
+            performLogout('انتهت صلاحية الجلسة الإدارية.');
+            return;
+          }
+          if (!response.ok) {
+            throw new Error('تعذر تحميل سجل الدفعات.');
+          }
+          payments = await response.json();
+          renderPayments();
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ أثناء تحميل الدفعات.');
+        }
+      }
+
       async function updateDriverVerification(driverId, verified) {
         try {
           const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${driverId}/verify`, {
@@ -276,6 +347,10 @@
         sessionStorage.removeItem('waslny_admin_token');
         adminApp.classList.add('hidden');
         loginView.classList.remove('hidden');
+        drivers = [];
+        payments = [];
+        renderDrivers();
+        renderPayments();
         if (message) {
           showToast(message, 'warning');
         }
@@ -308,6 +383,7 @@
           setFilterActive(availabilityFilters, filterAvailability);
           await ensureMap();
           await loadDrivers();
+          await loadPayments();
         } catch (error) {
           showToast(error.message || 'فشل تسجيل الدخول.');
         } finally {
@@ -328,6 +404,7 @@
 
       refreshBtn.addEventListener('click', () => {
         loadDrivers();
+        loadPayments();
       });
 
       driversBody.addEventListener('click', (event) => {
@@ -372,6 +449,7 @@
         setFilterActive(availabilityFilters, filterAvailability);
         await ensureMap();
         await loadDrivers();
+        await loadPayments();
       } else {
         setFilterActive(verifiedFilters, 'all');
         setFilterActive(availabilityFilters, 'all');

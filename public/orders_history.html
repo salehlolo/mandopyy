@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Waslny – سجل الطلبات</title>
+  <script src="/config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script defer src="/assets/js/ui.js"></script>
+  <style>
+    body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f1f5f9; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+    <header class="bg-white rounded-3xl shadow px-6 py-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p class="text-xs text-slate-400">لوحة المتابعة</p>
+        <h1 class="text-2xl font-bold text-slate-800">سجل الطلبات الخاصة بي</h1>
+        <p class="text-sm text-slate-500 mt-1">تابع حالة الطلبات السابقة وحالة الدفع لكل رحلة.</p>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button id="back-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
+          <i class="ph ph-arrow-u-up-left"></i>
+          <span>عودة للتطبيق</span>
+        </button>
+        <button id="refresh-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-800 transition">
+          <i class="ph ph-arrows-clockwise"></i>
+          <span>تحديث</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="space-y-4">
+      <div id="empty-state" class="hidden bg-white border border-dashed border-slate-200 rounded-3xl px-6 py-12 text-center space-y-3 text-slate-500">
+        <i class="ph ph-map-trifold text-4xl text-slate-300 mx-auto"></i>
+        <p class="text-lg font-semibold text-slate-700">لا توجد طلبات محفوظة حتى الآن</p>
+        <p class="text-sm">ابدأ بطلب رحلة جديدة من واجهة العميل وسيظهر سجل الطلبات هنا مباشرة.</p>
+      </div>
+      <div id="history-list" class="space-y-3"></div>
+    </main>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const config = window.__APP_CONFIG__ || {};
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        window.location.href = '/index.html';
+        return;
+      }
+
+      const historyList = document.getElementById('history-list');
+      const emptyState = document.getElementById('empty-state');
+      const refreshBtn = document.getElementById('refresh-btn');
+      const backBtn = document.getElementById('back-btn');
+      const detailsCache = new Map();
+
+      const statusLabels = {
+        CREATED: 'تم الإنشاء',
+        SEARCHING_DRIVER: 'جارٍ البحث',
+        DRIVER_ASSIGNED: 'تم تعيين مندوب',
+        DRIVER_ARRIVED_PICKUP: 'المندوب عند الاستلام',
+        PICKED_UP: 'تم الاستلام',
+        IN_TRANSIT: 'في الطريق',
+        ARRIVED_DROPOFF: 'وصول للتسليم',
+        DELIVERED: 'تم التسليم',
+        CANCELLED: 'ملغي'
+      };
+
+      const paymentLabels = {
+        paid: { text: 'مدفوع إلكترونيًا', badge: 'bg-emerald-100 text-emerald-600' },
+        failed: { text: 'فشل الدفع', badge: 'bg-rose-100 text-rose-600' },
+        pending: { text: 'قيد المعالجة', badge: 'bg-amber-100 text-amber-600' }
+      };
+
+      function formatDate(value) {
+        if (!value) return '-';
+        const date = new Date(value);
+        return new Intl.DateTimeFormat('ar-EG', {
+          dateStyle: 'medium',
+          timeStyle: 'short'
+        }).format(date);
+      }
+
+      function formatPrice(value) {
+        if (value == null || Number.isNaN(Number(value))) return '-';
+        return `${Number(value).toFixed(2)} ر.س`;
+      }
+
+      function renderOrders(orders) {
+        historyList.innerHTML = '';
+        if (!orders.length) {
+          emptyState.classList.remove('hidden');
+          return;
+        }
+        emptyState.classList.add('hidden');
+        orders.forEach((order) => {
+          const card = document.createElement('article');
+          card.className = 'bg-white rounded-3xl shadow px-5 py-5 space-y-4';
+          const payment = paymentLabels[String(order.paymentStatus || 'pending').toLowerCase()] || paymentLabels.pending;
+          const status = statusLabels[order.status] || order.status;
+          const amount = order.priceTotal != null ? order.priceTotal : order.price;
+          card.innerHTML = `
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p class="text-xs text-slate-400">رقم الطلب</p>
+                <p class="text-lg font-semibold text-slate-800">#${order.id}</p>
+              </div>
+              <div class="flex flex-wrap gap-2 text-xs">
+                <span class="inline-flex items-center gap-1 bg-blue-100 text-blue-600 px-3 py-1 rounded-full">${status}</span>
+                <span class="inline-flex items-center gap-1 ${payment.badge} px-3 py-1 rounded-full">${payment.text}</span>
+              </div>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2 text-sm text-slate-600">
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">الاستلام</p>
+                <p class="font-semibold">${order.pickupLabel || '-'}</p>
+              </div>
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">التسليم</p>
+                <p class="font-semibold">${order.dropoffLabel || '-'}</p>
+              </div>
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">تاريخ الطلب</p>
+                <p class="font-semibold">${formatDate(order.createdAt)}</p>
+              </div>
+              <div class="bg-slate-50 rounded-2xl p-3">
+                <p class="text-xs text-slate-400 mb-1">قيمة الرحلة</p>
+                <p class="font-semibold">${formatPrice(amount)}</p>
+                <p class="text-xs text-slate-400 mt-1">${order.paymentMethod === 'card' ? 'بطاقة (Paymob)' : 'دفع نقدي'}</p>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button data-order-id="${order.id}" class="details-btn inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
+                <i class="ph ph-list"></i>
+                <span>تفاصيل</span>
+              </button>
+            </div>
+            <div data-details="${order.id}" class="hidden bg-slate-50 rounded-2xl p-4 text-sm text-slate-600"></div>
+          `;
+          historyList.appendChild(card);
+        });
+      }
+
+      async function loadHistory() {
+        try {
+          const response = await fetch(`${config.API_BASE_URL}/v1/orders/my?role=customer`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error?.message || 'تعذر تحميل السجل');
+          }
+          const orders = await response.json();
+          renderOrders(Array.isArray(orders) ? orders : []);
+        } catch (error) {
+          window.UI?.showToast(error.message || 'حدث خلل أثناء تحميل السجل.', 'error');
+        }
+      }
+
+      async function toggleDetails(orderId, container) {
+        const cached = detailsCache.get(orderId);
+        if (!cached) {
+          try {
+            const response = await fetch(`${config.API_BASE_URL}/v1/orders/${orderId}`, {
+              headers: { Authorization: `Bearer ${authToken}` }
+            });
+            if (!response.ok) {
+              const error = await response.json().catch(() => ({}));
+              throw new Error(error?.message || 'تعذر جلب تفاصيل الطلب');
+            }
+            const details = await response.json();
+            detailsCache.set(orderId, details);
+          } catch (error) {
+            window.UI?.showToast(error.message || 'فشل تحميل تفاصيل الطلب.', 'error');
+            return;
+          }
+        }
+        const details = detailsCache.get(orderId);
+        if (!details) return;
+        const driverInfo = details.driver
+          ? `${details.driver.name || 'مندوب'} • ${details.driver.vehicleType || 'مركبة'} • ${details.driver.phoneNumber || '-'}`
+          : 'لم يتم تعيين مندوب';
+        const paymentStatus = paymentLabels[String(details.paymentStatus || 'pending').toLowerCase()] || paymentLabels.pending;
+        container.innerHTML = `
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p class="text-xs text-slate-400 mb-1">المسافة التقديرية</p>
+              <p class="font-semibold">${details.distanceKm != null ? `${Number(details.distanceKm).toFixed(2)} كم` : '-'}</p>
+            </div>
+            <div>
+              <p class="text-xs text-slate-400 mb-1">المدة المتوقعة</p>
+              <p class="font-semibold">${details.durationMin != null ? `${Number(details.durationMin).toFixed(0)} دقيقة` : '-'}</p>
+            </div>
+            <div class="sm:col-span-2">
+              <p class="text-xs text-slate-400 mb-1">المندوب</p>
+              <p class="font-semibold">${driverInfo}</p>
+            </div>
+            <div>
+              <p class="text-xs text-slate-400 mb-1">الدفع</p>
+              <p class="font-semibold">${details.paymentMethod === 'card' ? 'بطاقة (Paymob)' : 'دفع نقدي'}</p>
+            </div>
+            <div>
+              <p class="text-xs text-slate-400 mb-1">حالة الدفع</p>
+              <span class="inline-flex items-center gap-1 ${paymentStatus.badge} px-3 py-1 rounded-full">${paymentStatus.text}</span>
+            </div>
+          </div>
+        `;
+        container.classList.toggle('hidden');
+      }
+
+      historyList.addEventListener('click', (event) => {
+        const button = event.target.closest('.details-btn');
+        if (!button) return;
+        const orderId = Number(button.dataset.orderId);
+        if (!Number.isFinite(orderId)) return;
+        const container = historyList.querySelector(`[data-details="${orderId}"]`);
+        if (!container) return;
+        toggleDetails(orderId, container);
+      });
+
+      refreshBtn.addEventListener('click', loadHistory);
+      backBtn.addEventListener('click', () => {
+        window.location.href = '/delivery_app.html';
+      });
+
+      await loadHistory();
+    });
+  </script>
+</body>
+</html>
