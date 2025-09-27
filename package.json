@@ -1,0 +1,27 @@
+{
+  "name": "mandubo",
+  "version": "1.0.0",
+  "description": "MANDUBO on-demand delivery platform server and web apps",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.4",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^7.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.7.5",
+    "sqlite3": "^5.1.6",
+    "twilio": "^4.19.0"
+  },
+  "devDependencies": {
+    "jest": "^30.1.3",
+    "nodemon": "^3.0.3",
+    "supertest": "^7.1.4"
+  }
+}
