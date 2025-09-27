@@ -20,11 +20,14 @@
   <script defer src="/assets/js/ui.js"></script>
   <script defer src="/assets/js/map.js"></script>
   <style>
-    :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
+    :root{ --brand:#0F73FF; --brand-600:#0d63dd; --border:#E5E7EB; }
     body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f8fafc; }
     .brand { color: var(--brand); }
-    .btn-brand { background: var(--brand); color: #fff; }
+    .btn-brand { background: var(--brand); color: #fff; border: 0; }
     .btn-brand:hover { background: var(--brand-600); }
+    .req-card .label{font-size:12px;font-weight:600;color:#4b5563;margin-bottom:4px}
+    .req-card .input{width:100%;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:15px;color:#111827}
+    .req-card .input::placeholder{color:#9ca3af}
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen">
@@ -51,115 +54,70 @@
   </div>
 
   <div id="app" class="hidden min-h-screen flex flex-col">
-    <header class="bg-white shadow-sm border-b border-slate-100">
-      <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-        <h2 class="brand text-xl font-semibold" style="text-align:center;margin:10px 0">MANDUBO</h2>
-        <div class="flex items-center gap-3">
-          <button id="history-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
-            <i class="ph ph-clock-counter-clockwise"></i>
-            <span data-i18n="menu_history">سجل الطلبات</span>
-          </button>
-          <button id="logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
-            <i class="ph ph-sign-out"></i>
-            <span data-i18n="menu_logout">تسجيل الخروج</span>
-          </button>
-        </div>
+    <header id="appHeader" dir="rtl">
+      <style>
+        :root{ --brand:#0F73FF; --border:#E5E7EB; --bg:#F8FAFC; --card:#fff; --text:#111827 }
+        .hdr{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--border);height:56px;
+             display:flex;align-items:center;justify-content:center;z-index:1000}
+        .hdr-title{font-weight:900;color:var(--brand);font-size:18px;line-height:1}
+        .hamb{position:absolute;inset-inline-start:12px;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+        .hamb span{display:block;width:18px;height:2px;background:#111;border-radius:2px;position:relative}
+        .hamb span::before,.hamb span::after{content:"";position:absolute;left:0;width:18px;height:2px;background:#111;border-radius:2px}
+        .hamb span::before{top:-6px}.hamb span::after{top:6px}
+        .drawer{position:fixed;inset:0;z-index:1100;display:none}
+        .drawer.show{display:block}
+        .dr-bg{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+        .dr-panel{position:absolute;inset-block:0;inset-inline-start:0;width:min(320px,86vw);background:#fff;border-inline-end:1px solid var(--border);padding:14px;overflow:auto}
+        .dr-item{display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;cursor:pointer}
+        .dr-item:hover{background:#F3F4F6}
+      </style>
+      <div class="hdr">
+        <button class="hamb" id="hambBtn" aria-label="القائمة"><span></span></button>
+        <div class="hdr-title">MANDUBO</div>
       </div>
+
+      <nav class="drawer" id="drawer">
+        <div class="dr-bg"></div>
+        <div class="dr-panel" dir="rtl">
+          <div class="dr-item" id="drProfile">👤  الملف الشخصي</div>
+          <div class="dr-item" id="drHistory">🕘  سجل الطلبات</div>
+          <div class="dr-item" id="drLogout">🚪  تسجيل الخروج</div>
+        </div>
+      </nav>
+
+      <script>
+        const dr = document.getElementById('drawer');
+        document.getElementById('hambBtn').onclick = ()=> dr.classList.add('show');
+        dr.querySelector('.dr-bg').onclick = ()=> dr.classList.remove('show');
+        document.getElementById('drProfile').onclick = ()=> location.href='/profile.html';
+        document.getElementById('drHistory').onclick = ()=> location.href='/orders_history.html';
+        document.getElementById('drLogout').onclick  = ()=> { localStorage.removeItem('authToken'); location.href='/index.html'; };
+      </script>
     </header>
 
     <main class="flex-1 w-full max-w-6xl mx-auto px-4 py-6 flex flex-col lg:flex-row gap-6">
-      <section class="flex-1">
-        <div id="map" class="w-full h-[360px] md:h-[520px] lg:h-[560px] rounded-3xl overflow-hidden shadow bg-slate-200"></div>
-        <p class="mt-3 text-xs text-slate-400">
-          تلميح: أثناء الاختبار يمكنك النقر على الخريطة لاختيار نقاط الاستلام والتسليم بسرعة.
-        </p>
-      </section>
-
-      <section class="w-full lg:w-[360px] space-y-4 pb-8">
-        <div class="bg-white rounded-3xl shadow px-6 py-6 space-y-5">
+      <section class="w-full lg:w-[380px] space-y-4">
+        <div class="bg-white rounded-3xl shadow px-6 py-6 space-y-4">
           <div class="space-y-1">
             <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
               <i class="ph ph-navigation-arrow text-blue-600 text-xl"></i>
-              طلب توصيل جديد
+              أنشئ طلبات التوصيل
             </h2>
-            <p class="text-sm text-slate-500">أدخل المواقع ثم اعرض المسار والسعر المبدئي.</p>
+            <p class="text-sm text-slate-500">يمكنك إرسال حتى 5 طلبات في دفعة واحدة.</p>
           </div>
-          <div class="space-y-4">
-            <div class="space-y-2">
-              <label class="text-xs font-semibold text-slate-500">مكان الالتقاط</label>
-              <div class="flex items-center gap-2">
-                <input id="pickup-input" class="flex-1 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: مدينة نصر، القاهرة" />
-                <button type="button" id="pickup-save-btn" class="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 hover:bg-amber-100 transition"><span>⭐</span><span>حفظ</span></button>
-              </div>
-              <div class="flex items-center gap-2">
-                <select id="pickup-saved-select" class="flex-1 border border-slate-200 rounded-2xl px-3 py-2 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">عناوين الاستلام المحفوظة</option>
-                </select>
-                <button type="button" id="pickup-delete-btn" class="text-xs font-semibold text-rose-500 hover:text-rose-600 transition">حذف</button>
-              </div>
-            </div>
-            <div class="space-y-2">
-              <label class="text-xs font-semibold text-slate-500">مكان التسليم</label>
-              <div class="flex items-center gap-2">
-                <input id="dropoff-input" class="flex-1 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: المعادي، القاهرة" />
-                <button type="button" id="dropoff-save-btn" class="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 hover:bg-amber-100 transition"><span>⭐</span><span>حفظ</span></button>
-              </div>
-              <div class="flex items-center gap-2">
-                <select id="dropoff-saved-select" class="flex-1 border border-slate-200 rounded-2xl px-3 py-2 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">عناوين التسليم المحفوظة</option>
-                </select>
-                <button type="button" id="dropoff-delete-btn" class="text-xs font-semibold text-rose-500 hover:text-rose-600 transition">حذف</button>
-              </div>
-            </div>
-          </div>
-          <button id="route-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
-            <i class="ph ph-map-trifold text-lg"></i>
-            <span>عرض المسار</span>
-          </button>
+          <section id="multiCtrl" dir="rtl" style="max-width:420px;margin:10px 0 6px">
+            <label class="text-xs font-semibold text-slate-600">عدد المناديب (1–5)</label>
+            <select id="couriersCount" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:12px">
+              <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+            </select>
+          </section>
+          <section id="requestsWrap" style="display:flex;flex-direction:column;gap:12px"></section>
+          <button id="btnCheckout" class="btn-brand" style="width:100%;padding:12px;border-radius:12px">اطلب الآن</button>
         </div>
+      </section>
 
-        <div id="pricing-card" class="hidden bg-white rounded-3xl shadow px-6 py-6 space-y-5">
-          <div class="space-y-1">
-            <h3 class="text-lg font-semibold text-slate-800">التسعير المبدئي</h3>
-            <p class="text-xs text-slate-400">السعر النهائي يُحسب عند إنشاء الطلب على الخادم.</p>
-          </div>
-          <div class="grid grid-cols-2 gap-3 text-sm text-slate-600">
-            <div class="bg-slate-50 rounded-2xl p-3">
-              <p class="text-xs text-slate-400 mb-1">المسافة التقديرية</p>
-              <p id="distance-label" class="text-base font-semibold text-slate-800">-</p>
-            </div>
-            <div class="bg-slate-50 rounded-2xl p-3">
-              <p class="text-xs text-slate-400 mb-1">الوقت المتوقع</p>
-              <p id="duration-label" class="text-base font-semibold text-slate-800">-</p>
-            </div>
-            <div class="bg-slate-50 rounded-2xl p-3 col-span-2">
-              <p class="text-xs text-slate-400 mb-1">السعر التقديري</p>
-              <p id="price-label" class="text-2xl font-bold text-blue-600">-</p>
-            </div>
-          </div>
-          <div class="space-y-2">
-            <p class="text-xs font-semibold text-slate-500">طريقة الدفع</p>
-            <div class="grid gap-2">
-              <label class="flex items-center justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-600 hover:border-blue-200 transition">
-                <span class="flex items-center gap-2"><i class="ph ph-money"></i>دفع نقدي عند التسليم</span>
-                <input type="radio" name="payment-method" value="cash" class="accent-blue-600" checked />
-              </label>
-              <label class="flex items-center justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-600 hover:border-blue-200 transition">
-                <span class="flex items-center gap-2"><i class="ph ph-credit-card"></i>بطاقة (Paymob)</span>
-                <input type="radio" name="payment-method" value="card" class="accent-blue-600" />
-              </label>
-            </div>
-          </div>
-          <div class="space-y-1 text-xs text-slate-500">
-            <p id="pickup-label">لم يتم تحديد موقع الاستلام بعد.</p>
-            <p id="dropoff-label">لم يتم تحديد موقع التسليم بعد.</p>
-          </div>
-          <button id="confirm-btn" class="w-full inline-flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-2xl py-3 transition">
-            <i class="ph ph-paper-plane-tilt text-lg"></i>
-            <span>تأكيد الطلب</span>
-          </button>
-        </div>
-
+      <section id="mapContainer" class="flex-1 hidden flex-col gap-4">
+        <div id="map" class="w-full h-[360px] md:h-[520px] lg:h-[560px] rounded-3xl overflow-hidden shadow bg-slate-200"></div>
         <div id="order-card" class="hidden bg-white rounded-3xl shadow px-6 py-6 space-y-5">
           <div class="flex items-center justify-between gap-3">
             <div>
@@ -198,17 +156,13 @@
             </div>
           </div>
           <div class="space-y-3">
-            <button id="pay-card-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-2xl py-3 transition">
-              <i class="ph ph-credit-card"></i>
-              <span>إتمام الدفع بالبطاقة</span>
-            </button>
             <button id="cancel-btn" class="w-full inline-flex items-center justify-center gap-2 bg-rose-100 text-rose-600 font-semibold rounded-2xl py-3 transition hover:bg-rose-200">
               <i class="ph ph-x-circle text-lg"></i>
               <span>إلغاء الطلب</span>
             </button>
             <button id="new-order-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold rounded-2xl py-3 transition hover:bg-blue-700">
               <i class="ph ph-plus text-lg"></i>
-              <span>طلب جديد</span>
+              <span>إنشاء طلبات جديدة</span>
             </button>
           </div>
         </div>
@@ -216,26 +170,52 @@
     </main>
   </div>
 
-  <style>
-    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
-    .dev-menu:hover{opacity:1}
-    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
-    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
-  </style>
-  <div class="dev-menu" id="devMenu" style="display:none">
-    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
-    · <button class="btn" id="mockLogin">Mock Login</button>
-    <button class="btn" id="logout">Logout</button>
+  <div id="checkoutModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1200;align-items:center;justify-content:center">
+    <div style="width:min(560px,92vw);background:#fff;border:1px solid var(--border);border-radius:16px;padding:14px" dir="rtl">
+      <h3 style="margin:0 0 8px">تأكيد الطلبات</h3>
+      <div id="ordersSummary" style="max-height:50vh;overflow:auto;margin-bottom:8px"></div>
+
+      <div style="background:#F9FAFB;border:1px solid var(--border);border-radius:12px;padding:10px;margin:10px 0">
+        <div style="font-weight:700;margin-bottom:6px">طريقة الدفع</div>
+        <label style="margin-inline-end:10px"><input type="radio" name="paym" value="cash" checked> كاش</label>
+        <label><input type="radio" name="paym" value="card"> Online (Paymob)</label>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="coCancel" class="btn" style="padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:#fff">رجوع</button>
+        <button id="coConfirm" class="btn btn-brand" style="padding:10px 14px;border-radius:12px">تأكيد وتنفيذ</button>
+      </div>
+    </div>
   </div>
+
   <script>
-    (function(){
-      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
-        const dm=document.getElementById('devMenu');
-        if(dm) dm.style.display='block';
-        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
-        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
-      }
-    })();
+    const reqWrap = document.getElementById('requestsWrap');
+
+    function requestCardTemplate(idx){
+      return `
+        <div class="req-card" data-idx="${idx}" style="background:#fff;border:1px solid var(--border);border-radius:16px;padding:12px">
+          <div style="font-weight:700;margin-bottom:6px">طلب توصيل #${idx+1}</div>
+          <div class="field" style="margin-bottom:12px">
+            <div class="label">مكان الالتقاط</div>
+            <input type="text" class="input pick" placeholder="مثال: مدينة نصر، القاهرة" />
+          </div>
+          <div class="field">
+            <div class="label">مكان التسليم</div>
+            <input type="text" class="input drop" placeholder="مثال: المعادي، القاهرة" />
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRequestForms(count){
+      const capped = Math.min(5, Math.max(1, Number(count) || 1));
+      reqWrap.innerHTML = '';
+      for(let i=0;i<capped;i++) reqWrap.insertAdjacentHTML('beforeend', requestCardTemplate(i));
+      document.getElementById('couriersCount').value = String(capped);
+    }
+
+    renderRequestForms(1);
+    document.getElementById('couriersCount').onchange = (e)=> renderRequestForms(+e.target.value);
   </script>
 
   <script>
@@ -244,7 +224,6 @@
       const guard = document.getElementById('auth-guard');
       const app = document.getElementById('app');
 
-      // 1) الحارس أولاً
       const authToken = localStorage.getItem('authToken');
       if (!authToken) {
         guard.classList.remove('hidden');
@@ -257,10 +236,11 @@
         });
         return;
       }
+
       guard.classList.add('hidden');
       app.classList.remove('hidden');
+      window.UI?.attachDevMenu?.();
 
-      // 2) انتظر MapKit بدل ما ترجع فورًا وتسيب الصفحة فاضية
       async function waitForMapKit(ms = 4000) {
         const start = performance.now();
         while (!window.MapKit && performance.now() - start < ms) {
@@ -280,79 +260,24 @@
         return;
       }
 
-      const APP_NAME = window.__APP_NAME__ || 'MANDUBO';
-      const logoutBtn = document.getElementById('logout-btn');
-
-      const pickupInput = document.getElementById('pickup-input');
-      const dropoffInput = document.getElementById('dropoff-input');
-      const pickupSaveBtn = document.getElementById('pickup-save-btn');
-      const dropoffSaveBtn = document.getElementById('dropoff-save-btn');
-      const pickupSavedSelect = document.getElementById('pickup-saved-select');
-      const dropoffSavedSelect = document.getElementById('dropoff-saved-select');
-      const pickupDeleteBtn = document.getElementById('pickup-delete-btn');
-      const dropoffDeleteBtn = document.getElementById('dropoff-delete-btn');
-      const routeBtn = document.getElementById('route-btn');
-      const pricingCard = document.getElementById('pricing-card');
-      const distanceLabel = document.getElementById('distance-label');
-      const durationLabel = document.getElementById('duration-label');
-      const priceLabel = document.getElementById('price-label');
-      const pickupLabel = document.getElementById('pickup-label');
-      const dropoffLabel = document.getElementById('dropoff-label');
-      const confirmBtn = document.getElementById('confirm-btn');
-      const paymentMethodRadios = Array.from(document.querySelectorAll('input[name="payment-method"]'));
-
+      const map = await mapKit.initMap('map', [30.0444, 31.2357], 12);
+      const mapContainer = document.getElementById('mapContainer');
+      const checkoutModal = document.getElementById('checkoutModal');
+      const ordersSummary = document.getElementById('ordersSummary');
+      const btnCheckout = document.getElementById('btnCheckout');
+      const coCancel = document.getElementById('coCancel');
+      const coConfirm = document.getElementById('coConfirm');
+      const cancelBtn = document.getElementById('cancel-btn');
+      const newOrderBtn = document.getElementById('new-order-btn');
       const orderCard = document.getElementById('order-card');
       const orderStatusPill = document.getElementById('order-status-pill');
       const driverNameEl = document.getElementById('driver-name');
       const driverVehicleEl = document.getElementById('driver-vehicle');
       const driverPhoneEl = document.getElementById('driver-phone');
-      const cancelBtn = document.getElementById('cancel-btn');
-      const newOrderBtn = document.getElementById('new-order-btn');
-      const payCardBtn = document.getElementById('pay-card-btn');
       const orderAmountEl = document.getElementById('order-amount');
       const orderPaymentMethodEl = document.getElementById('order-payment-method');
       const orderPaymentStatusEl = document.getElementById('order-payment-status');
       const orderPinEl = document.getElementById('order-pin');
-      const historyBtn = document.getElementById('history-btn');
-
-      await refreshSavedAddresses();
-
-      if ((config.PAY_PROVIDER || '').toLowerCase() !== 'paymob') {
-        const cardOption = paymentMethodRadios.find((radio) => radio.value === 'card');
-        if (cardOption) {
-          cardOption.disabled = true;
-          cardOption.parentElement.classList.add('opacity-60', 'cursor-not-allowed');
-        }
-      }
-
-      logoutBtn.addEventListener('click', () => {
-        localStorage.removeItem('authToken');
-        window.location.href = '/index.html';
-      });
-
-      historyBtn.addEventListener('click', () => {
-        window.location.href = '/orders_history.html';
-      });
-
-      const map = await mapKit.initMap('map', [30.0444, 31.2357], 12);
-
-      let pickupPoint = null;
-      let dropoffPoint = null;
-      let pickupMarker = null;
-      let dropoffMarker = null;
-      let driverMarker = null;
-      let driverTrail = null;
-      let lastDriverLatLng = null;
-      let currentRouteControl = null;
-      let quotedTrip = null;
-      let currentOrder = null;
-      let socket = null;
-      let pickupLabelValue = '';
-      let dropoffLabelValue = '';
-      let paymentModal = null;
-      let paymentPollTimer = null;
-      let savedAddresses = [];
-      updateSaveButtons();
 
       const statusLabels = {
         CREATED: 'تم إنشاء الطلب',
@@ -386,822 +311,381 @@
         pending: 'text-amber-600'
       };
 
-      function setSaveButtonState(button, enabled) {
-        if (!button) return;
-        button.disabled = !enabled;
-        button.classList.toggle('opacity-60', !enabled);
-        button.classList.toggle('cursor-not-allowed', !enabled);
+      let preparedRequests = [];
+      let createdOrders = [];
+      let activeOrderId = null;
+      let socket = null;
+      let pickupMarker = null;
+      let dropoffMarker = null;
+      let driverMarker = null;
+      let driverTrail = null;
+      let lastDriverPoint = null;
+      let currentRouteControl = null;
+
+      function calculatePrice(km){
+        if (!Number.isFinite(km)) return 20;
+        return Math.round((20 + 4 * km) * 100) / 100;
       }
 
-      function updateSaveButtons() {
-        const allowChanges =
-          !currentOrder || currentOrder.status === 'DELIVERED' || currentOrder.status === 'CANCELLED';
-        setSaveButtonState(pickupSaveBtn, Boolean(pickupPoint) && allowChanges);
-        setSaveButtonState(dropoffSaveBtn, Boolean(dropoffPoint) && allowChanges);
-        if (pickupSavedSelect) pickupSavedSelect.disabled = !allowChanges;
-        if (dropoffSavedSelect) dropoffSavedSelect.disabled = !allowChanges;
-      }
-
-      function addressDisplayLabel(address) {
-        if (!address) return '';
-        if (address.label) return address.label;
-        const lat = Number(address.lat);
-        const lng = Number(address.lng);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      function collectRequests(){
+        const count = Math.min(5, Math.max(1, Number(document.getElementById('couriersCount').value) || 1));
+        const cards = Array.from(document.querySelectorAll('.req-card'));
+        const results = [];
+        for(let i=0;i<count;i++){
+          const card = cards[i];
+          const pick = card.querySelector('.pick').value.trim();
+          const drop = card.querySelector('.drop').value.trim();
+          if(!pick || !drop){
+            window.UI?.showToast(`أكمل بيانات الطلب رقم ${i+1}`, 'warning');
+            card.querySelector(!pick ? '.pick' : '.drop').focus();
+            return null;
+          }
+          results.push({ index: i, pick, drop });
         }
-        return 'عنوان بدون اسم';
+        return results;
       }
 
-      function populateAddressSelect(selectEl, addresses, placeholder) {
-        if (!selectEl) return;
-        const previousValue = selectEl.value;
-        selectEl.innerHTML = '';
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = placeholder;
-        selectEl.appendChild(defaultOption);
-        addresses.forEach((address) => {
-          const option = document.createElement('option');
-          option.value = String(address.id);
-          option.textContent = addressDisplayLabel(address);
-          selectEl.appendChild(option);
-        });
-        if (previousValue && addresses.some((addr) => String(addr.id) === previousValue)) {
-          selectEl.value = previousValue;
+      async function prepareRequests(requests){
+        const prepared = [];
+        for(const req of requests){
+          const pickup = await mapKit.geocode(req.pick);
+          const dropoff = await mapKit.geocode(req.drop);
+          let route = null;
+          try {
+            route = await mapKit.routeAndEta(map, pickup, dropoff);
+          } catch (error) {
+            console.error('Route error', error);
+            throw new Error('تعذر حساب المسار، جرّب مواقع أخرى.');
+          } finally {
+            if (route?.control && map.removeControl) {
+              map.removeControl(route.control);
+            }
+          }
+          prepared.push({
+            idx: req.index,
+            pickup,
+            dropoff,
+            pickupLabel: req.pick,
+            dropoffLabel: req.drop,
+            km: route?.km ?? 0,
+            minutes: route?.minutes ?? 0,
+            price: calculatePrice(route?.km ?? 0)
+          });
         }
+        return prepared;
       }
 
-      async function refreshSavedAddresses(showToast = false) {
-        if (!config.API_BASE_URL) return;
+      function showCheckout(summary){
+        const total = summary.reduce((acc, item) => acc + item.price, 0);
+        ordersSummary.innerHTML = summary.map((s) => `
+          <div style="border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:8px">
+            <div style="font-weight:700">طلب #${s.idx+1}</div>
+            <div style="color:#374151">${s.pickupLabel} → ${s.dropoffLabel}</div>
+            <div>المسافة: ${s.km.toFixed(2)} كم</div>
+            <div>الوقت المتوقع: ${s.minutes} دقيقة</div>
+            <div style="font-weight:700">المبلغ: ${s.price.toFixed(2)} ج.م</div>
+          </div>
+        `).join('') + `<div style="text-align:end;font-weight:900">الإجمالي: ${total.toFixed(2)} ج.م</div>`;
+        checkoutModal.style.display = 'flex';
+      }
+
+      function hideCheckout(){
+        checkoutModal.style.display = 'none';
+      }
+
+      async function fetchPaymentFailureReason(orderId){
         try {
-          const response = await fetch(`${config.API_BASE_URL}/v1/addresses/my`, {
+          const response = await fetch(`${config.API_BASE_URL}/v1/payments/${orderId}/last`, {
             headers: { Authorization: `Bearer ${authToken}` }
           });
-          if (!response.ok) {
-            throw new Error('تعذر تحميل العناوين المحفوظة.');
-          }
+          if (!response.ok) return null;
           const data = await response.json();
-          savedAddresses = Array.isArray(data) ? data : [];
-          populateAddressSelect(pickupSavedSelect, savedAddresses, 'عناوين الاستلام المحفوظة');
-          populateAddressSelect(dropoffSavedSelect, savedAddresses, 'عناوين التسليم المحفوظة');
-          updateSaveButtons();
-          if (showToast) {
-            window.UI?.showToast('تم تحديث العناوين المحفوظة.', 'success');
-          }
+          return data?.reason || null;
         } catch (error) {
-          console.warn('Failed to refresh saved addresses', error);
-          if (showToast) {
-            window.UI?.showToast(error.message || 'تعذر تحديث العناوين.', 'error');
-          }
+          return null;
         }
       }
 
-      async function saveFavoriteAddress(point, rawLabel) {
-        if (!config.API_BASE_URL) {
-          throw new Error('لم يتم ضبط عنوان الخادم.');
-        }
-        const label = (rawLabel || '').trim() || formatCoords(point);
-        const response = await fetch(`${config.API_BASE_URL}/v1/addresses`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ label, lat: point.lat, lng: point.lng })
+      async function openPaymobIframe(url, orderId){
+        return new Promise((resolve) => {
+          const shade=document.createElement('div');
+          shade.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1300;display:flex;align-items:center;justify-content:center';
+          shade.innerHTML = `<div style="width:min(680px,96vw);height:min(80vh,720px);background:#fff;border-radius:16px;overflow:hidden">
+              <iframe src="${url}" style="border:0;width:100%;height:100%"></iframe>
+            </div>`;
+          document.body.appendChild(shade);
+          let tries=0; const max=80;
+          const timer=setInterval(async ()=>{
+            tries++;
+            const response = await fetch(`${config.API_BASE_URL}/v1/orders/${orderId}`, {
+              headers: { Authorization: `Bearer ${authToken}` }
+            });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data.paymentStatus === 'paid') {
+              clearInterval(timer);
+              document.body.removeChild(shade);
+              resolve(true);
+            } else if (data.paymentStatus === 'failed' || tries >= max) {
+              clearInterval(timer);
+              document.body.removeChild(shade);
+              resolve(false);
+            }
+          }, 3000);
         });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.message || 'تعذر حفظ العنوان.');
-        }
-        await refreshSavedAddresses();
-        return data;
       }
 
-      async function deleteAddressById(id) {
-        if (!config.API_BASE_URL) {
-          throw new Error('لم يتم ضبط عنوان الخادم.');
-        }
-        const response = await fetch(`${config.API_BASE_URL}/v1/addresses/${id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data?.message || 'تعذر حذف العنوان.');
-        }
-        await refreshSavedAddresses();
-      }
-
-      async function applySavedAddress(address, type) {
-        if (!address) return;
-        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
-          window.UI?.showToast('لا يمكن تعديل المواقع أثناء وجود طلب نشط.', 'warning');
+      async function executeOrders(){
+        const method = (document.querySelector('input[name="paym"]:checked')||{}).value || 'cash';
+        if (!preparedRequests.length) {
+          window.UI?.showToast('لا توجد طلبات جاهزة للتنفيذ.', 'warning');
           return;
         }
-        const point = { lat: Number(address.lat), lng: Number(address.lng) };
-        if (type === 'pickup') {
-          pickupPoint = point;
-          pickupLabelValue = address.label || formatCoords(point);
-          pickupInput.value = address.label || '';
-          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
+        window.UI?.setLoading(coConfirm, true, 'جارٍ التنفيذ...');
+        const created = [];
+        try {
+          for (const req of preparedRequests) {
+            const response = await fetch(`${config.API_BASE_URL}/api/orders`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${authToken}`
+              },
+              body: JSON.stringify({
+                pickup: { lat: req.pickup.lat, lng: req.pickup.lng, label: req.pickupLabel },
+                dropoff: { lat: req.dropoff.lat, lng: req.dropoff.lng, label: req.dropoffLabel },
+                paymentMethod: method,
+                pickupLabel: req.pickupLabel,
+                dropoffLabel: req.dropoffLabel
+              })
+            });
+            const data = await response.json();
+            if (response.status === 202 && data.reason === 'NO_DRIVER') {
+              window.UI?.showToast('لم يتم العثور على مندوب مناسب لأحد الطلبات.', 'warning');
+              continue;
+            }
+            if (!response.ok) {
+              throw new Error(data?.message || 'فشل إنشاء الطلب');
+            }
+            created.push(data);
+            if (method === 'card') {
+              const payInit = await fetch(`${config.API_BASE_URL}/v1/pay/paymob/init`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ orderId: data.id })
+              });
+              const payData = await payInit.json();
+              if (!payInit.ok) {
+                throw new Error(payData?.message || 'فشل تهيئة الدفع الإلكتروني');
+              }
+              const ok = await openPaymobIframe(payData.iframe_url, data.id);
+              if (!ok) {
+                const reason = await fetchPaymentFailureReason(data.id);
+                window.UI?.showToast(reason ? `فشل الدفع: ${reason}` : 'فشل الدفع الإلكتروني، تحقق من البطاقة.', 'error');
+                return;
+              }
+            }
+          }
+          if (!created.length) {
+            window.UI?.showToast('لم يتم إنشاء أي طلب.', 'warning');
+            return;
+          }
+          hideCheckout();
+          afterOrdersCreated(created);
+        } catch (error) {
+          window.UI?.showToast(error.message || 'حدث خطأ أثناء التنفيذ.', 'error');
+        } finally {
+          window.UI?.setLoading(coConfirm, false);
+        }
+      }
+
+      function resetDriverLayers(){
+        if (driverMarker) { driverMarker.remove(); driverMarker = null; }
+        if (driverTrail) { driverTrail.remove(); driverTrail = null; }
+        lastDriverPoint = null;
+      }
+
+      async function showOrderOnMap(order){
+        if (!order?.pickup || !order?.dropoff) return;
+        mapContainer.classList.remove('hidden');
+        resetDriverLayers();
+        pickupMarker?.remove();
+        dropoffMarker?.remove();
+        pickupMarker = mapKit.addMarker(map, { lat: order.pickup.lat, lng: order.pickup.lng, label: 'استلام' });
+        dropoffMarker = mapKit.addMarker(map, { lat: order.dropoff.lat, lng: order.dropoff.lng, label: 'تسليم' });
+        if (currentRouteControl && map.removeControl) {
+          map.removeControl(currentRouteControl);
+        }
+        try {
+          const route = await mapKit.routeAndEta(map, order.pickup, order.dropoff);
+          currentRouteControl = route.control;
+          mapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker].filter(Boolean));
+        } catch (error) {
+          console.warn('Route drawing failed', error);
+        }
+      }
+
+      function renderOrderCard(order){
+        if (!order) {
+          orderCard.classList.add('hidden');
+          return;
+        }
+        const statusClass = statusClasses[order.status] || statusClasses.default;
+        orderStatusPill.className = `inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full ${statusClass}`;
+        orderStatusPill.textContent = statusLabels[order.status] || order.status;
+        if (order.driver) {
+          driverNameEl.textContent = order.driver.name || 'المندوب';
+          const vehicleInfo = [order.driver.vehicleType, order.driver.licensePlate].filter(Boolean).join(' • ');
+          driverVehicleEl.textContent = vehicleInfo || 'تفاصيل المركبة ستظهر هنا';
+          driverPhoneEl.textContent = order.driver.phoneNumber || '-';
         } else {
-          dropoffPoint = point;
-          dropoffLabelValue = address.label || formatCoords(point);
-          dropoffInput.value = address.label || '';
-          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
+          driverNameEl.textContent = 'بانتظار المندوب';
+          driverVehicleEl.textContent = 'ستظهر التفاصيل فور التعيين';
+          driverPhoneEl.textContent = '-';
         }
-        updateMarkers();
-        updateSaveButtons();
-        if (pickupPoint && dropoffPoint) {
-          resetRoute();
-          try {
-            await drawRoute();
-          } catch (error) {
-            console.warn('Failed to draw route after selecting address', error);
+        const amount = order.priceTotal ?? order.price ?? 0;
+        orderAmountEl.textContent = `${Number(amount).toFixed(2)} ج.م`;
+        orderPaymentMethodEl.textContent = order.paymentMethod === 'card' ? 'دفع إلكتروني (Paymob)' : 'دفع نقدي';
+        const paymentStatus = (order.paymentStatus || 'pending').toLowerCase();
+        orderPaymentStatusEl.textContent = paymentStatusLabels[paymentStatus] || order.paymentStatus;
+        orderPaymentStatusEl.className = `font-semibold text-sm ${paymentStatusClasses[paymentStatus] || ''}`;
+        orderPinEl.textContent = order.pinCode || '-';
+        orderCard.classList.remove('hidden');
+        showOrderOnMap(order);
+      }
+
+      function handleOrderUpdate(order){
+        if (!order || !order.id) return;
+        const index = createdOrders.findIndex((o) => o.id === order.id);
+        if (index >= 0) {
+          createdOrders[index] = order;
+        } else {
+          createdOrders.push(order);
+        }
+        if (!activeOrderId) {
+          activeOrderId = order.id;
+        }
+        if (order.id === activeOrderId) {
+          renderOrderCard(order);
+        }
+        if (order.status === 'DELIVERED' || order.status === 'CANCELLED') {
+          newOrderBtn.classList.remove('hidden');
+          cancelBtn.classList.add('hidden');
+        }
+      }
+
+      function handleDriverLocation(payload){
+        if (!payload || payload.orderId !== activeOrderId) return;
+        const point = { lat: Number(payload.lat), lng: Number(payload.lng) };
+        if (!driverMarker) {
+          driverMarker = mapKit.addMarker(map, { lat: point.lat, lng: point.lng, label: 'المندوب' });
+        }
+        if (!driverTrail) {
+          driverTrail = L.polyline([[point.lat, point.lng]], { color: '#0F73FF', weight: 4 }).addTo(map);
+        } else {
+          const latLngs = driverTrail.getLatLngs();
+          latLngs.push(L.latLng(point.lat, point.lng));
+          if (latLngs.length > 100) {
+            latLngs.shift();
           }
+          driverTrail.setLatLngs(latLngs);
         }
+        mapKit.smoothDriverMarker(driverMarker, lastDriverPoint, point, 600);
+        lastDriverPoint = point;
+        mapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker].filter(Boolean));
       }
 
-      function formatCoords(point) {
-        return `(${Number(point.lat).toFixed(5)}, ${Number(point.lng).toFixed(5)})`;
-      }
-
-      function resetDriverTracking() {
-        if (driverMarker) {
-          map.removeLayer(driverMarker);
-          driverMarker = null;
-        }
-        if (driverTrail) {
-          map.removeLayer(driverTrail);
-          driverTrail = null;
-        }
-        lastDriverLatLng = null;
-      }
-
-      function updateMarkers() {
-        if (pickupPoint) {
-          if (!pickupMarker) {
-            pickupMarker = mapKit.addMarker(map, { lat: pickupPoint.lat, lng: pickupPoint.lng, label: 'الاستلام' });
-          } else {
-            pickupMarker.setLatLng([pickupPoint.lat, pickupPoint.lng]);
+      function afterOrdersCreated(orders){
+        createdOrders = orders;
+        activeOrderId = orders[0]?.id || null;
+        orders.forEach((order) => {
+          if (order?.id) {
+            socket?.emit('order:join', { orderId: order.id });
           }
+        });
+        if (activeOrderId) {
+          renderOrderCard(orders.find((o) => o.id === activeOrderId));
+          cancelBtn.classList.remove('hidden');
+          newOrderBtn.classList.add('hidden');
+          window.UI?.showToast('تم إنشاء الطلبات بنجاح!', 'success');
         }
-        if (dropoffPoint) {
-          if (!dropoffMarker) {
-            dropoffMarker = mapKit.addMarker(map, { lat: dropoffPoint.lat, lng: dropoffPoint.lng, label: 'التسليم' });
-          } else {
-            dropoffMarker.setLatLng([dropoffPoint.lat, dropoffPoint.lng]);
-          }
-        }
-        mapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
+        document.getElementById('multiCtrl').style.display='none';
+        document.getElementById('requestsWrap').style.display='none';
+        btnCheckout.style.display='none';
+        mapContainer.classList.remove('hidden');
       }
 
-      function resetPricingCard() {
-        quotedTrip = null;
-        pricingCard.classList.add('hidden');
-        distanceLabel.textContent = '-';
-        durationLabel.textContent = '-';
-        priceLabel.textContent = '-';
-        pickupLabel.textContent = 'لم يتم تحديد موقع الاستلام بعد.';
-        dropoffLabel.textContent = 'لم يتم تحديد موقع التسليم بعد.';
-        pickupLabelValue = '';
-        dropoffLabelValue = '';
-        confirmBtn.disabled = false;
-        confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
-      }
-
-      function resetRoute() {
-        if (currentRouteControl) {
+      function startNewOrderFlow(){
+        createdOrders = [];
+        activeOrderId = null;
+        renderRequestForms(1);
+        document.getElementById('multiCtrl').style.display='';
+        document.getElementById('requestsWrap').style.display='flex';
+        btnCheckout.style.display='';
+        mapContainer.classList.add('hidden');
+        orderCard.classList.add('hidden');
+        cancelBtn.classList.remove('hidden');
+        newOrderBtn.classList.add('hidden');
+        resetDriverLayers();
+        if (currentRouteControl && map.removeControl) {
           map.removeControl(currentRouteControl);
           currentRouteControl = null;
         }
       }
 
-      function resetAll() {
-        resetRoute();
-        resetPricingCard();
-        resetDriverTracking();
-        if (pickupMarker) {
-          map.removeLayer(pickupMarker);
-          pickupMarker = null;
+      btnCheckout.addEventListener('click', async () => {
+        const requests = collectRequests();
+        if (!requests) return;
+        window.UI?.showLoadingOverlay('جارٍ حساب الأسعار...');
+        try {
+          preparedRequests = await prepareRequests(requests);
+          showCheckout(preparedRequests);
+        } catch (error) {
+          window.UI?.showToast(error.message || 'فشل حساب الأسعار.', 'error');
+        } finally {
+          window.UI?.hideLoadingOverlay();
         }
-        if (dropoffMarker) {
-          map.removeLayer(dropoffMarker);
-          dropoffMarker = null;
-        }
-        pickupPoint = null;
-        dropoffPoint = null;
-        pickupInput.value = '';
-        dropoffInput.value = '';
-        orderCard.classList.add('hidden');
-        cancelBtn.classList.add('hidden');
-        newOrderBtn.classList.add('hidden');
-        paymentMethodRadios.forEach((radio) => {
-          radio.checked = radio.value === 'cash';
-        });
-        currentOrder = null;
-        if (orderPinEl) orderPinEl.textContent = '-';
-        if (pickupSavedSelect) pickupSavedSelect.value = '';
-        if (dropoffSavedSelect) dropoffSavedSelect.value = '';
-        updateSaveButtons();
-      }
+      });
 
-      function updateOrderUI(order) {
-        if (!order) {
-          orderCard.classList.add('hidden');
+      coCancel.addEventListener('click', hideCheckout);
+      coConfirm.addEventListener('click', executeOrders);
+
+      cancelBtn.addEventListener('click', async () => {
+        if (!activeOrderId) return;
+        try {
+          const res = await fetch(`${config.API_BASE_URL}/api/orders/${activeOrderId}/cancel`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data?.message || 'فشل إلغاء الطلب');
+          }
+          window.UI?.showToast('تم إلغاء الطلب.', 'info');
           cancelBtn.classList.add('hidden');
-          newOrderBtn.classList.add('hidden');
-          return;
-        }
-        orderCard.classList.remove('hidden');
-        const status = order.status;
-        orderStatusPill.textContent = statusLabels[status] || status;
-        const statusClass = statusClasses[status] || statusClasses.default;
-        orderStatusPill.className = `inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full ${statusClass}`;
-
-        if (order.driver) {
-          driverNameEl.textContent = order.driver.name || 'مندوب معتمد';
-          const vehicleDetails = [order.driver.vehicleType, order.driver.licensePlate]
-            .filter(Boolean)
-            .join(' • ');
-          driverVehicleEl.textContent = vehicleDetails || 'تفاصيل المركبة غير متاحة';
-          driverPhoneEl.textContent = order.driver.phoneNumber || '-';
-        } else {
-          driverNameEl.textContent = 'جارٍ البحث عن أقرب مندوب متاح';
-          driverVehicleEl.textContent = 'ستظهر التفاصيل فور التعيين';
-          driverPhoneEl.textContent = '-';
-        }
-
-        const amountValue =
-          order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
-        orderAmountEl.textContent = amountValue != null ? `${amountValue.toFixed(2)} ر.س` : '-';
-        const methodLabel = order.paymentMethod === 'card' ? 'بطاقة (Paymob)' : 'دفع نقدي عند التسليم';
-        orderPaymentMethodEl.textContent = methodLabel;
-        const paymentStatusKey = String(order.paymentStatus || 'pending').toLowerCase();
-        orderPaymentStatusEl.textContent = paymentStatusLabels[paymentStatusKey] || paymentStatusKey;
-        orderPaymentStatusEl.className = `text-xs font-semibold ${
-          paymentStatusClasses[paymentStatusKey] || 'text-slate-600'
-        } mt-1`;
-        if (orderPinEl) {
-          orderPinEl.textContent = order.pinCode || '-';
-        }
-        const showPayButton = order.paymentMethod === 'card' && paymentStatusKey !== 'paid';
-        payCardBtn.classList.toggle('hidden', !showPayButton);
-        if (paymentStatusKey === 'paid') {
-          closePaymentModal();
-          stopPaymentPolling();
-        }
-        if (paymentStatusKey === 'failed') {
-          stopPaymentPolling();
-          closePaymentModal();
-        }
-
-        const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
-        cancelBtn.classList.toggle('hidden', isFinished);
-        newOrderBtn.classList.toggle('hidden', !isFinished);
-
-        if (status === 'DELIVERED') {
-          window.UI?.showToast(`تم تسليم الطلب بنجاح، شكرًا لاستخدامك ${APP_NAME}!`, 'success');
-        }
-        if (status === 'CANCELLED' && order.reason === 'NO_DRIVER') {
-          window.UI?.showToast('لم يتم العثور على مندوب في النطاق المحدد حالياً.', 'warning');
-          resetDriverTracking();
-        }
-
-        mapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
-        updateSaveButtons();
-      }
-
-      function calculatePrice(distanceKm) {
-        return Number((20 + distanceKm * 4).toFixed(2));
-      }
-
-      if (pickupSaveBtn) {
-        pickupSaveBtn.addEventListener('click', async () => {
-          if (!pickupPoint) {
-            window.UI?.showToast('حدد موقع الاستلام أولاً.', 'warning');
-            return;
-          }
-          try {
-            const saved = await saveFavoriteAddress(pickupPoint, pickupInput.value || pickupLabelValue);
-            if (pickupSavedSelect && saved?.id != null) {
-              pickupSavedSelect.value = String(saved.id);
-            }
-            window.UI?.showToast('تم حفظ عنوان الاستلام.', 'success');
-          } catch (error) {
-            window.UI?.showToast(error.message || 'تعذر حفظ العنوان.', 'error');
-          }
-        });
-      }
-
-      if (dropoffSaveBtn) {
-        dropoffSaveBtn.addEventListener('click', async () => {
-          if (!dropoffPoint) {
-            window.UI?.showToast('حدد موقع التسليم أولاً.', 'warning');
-            return;
-          }
-          try {
-            const saved = await saveFavoriteAddress(dropoffPoint, dropoffInput.value || dropoffLabelValue);
-            if (dropoffSavedSelect && saved?.id != null) {
-              dropoffSavedSelect.value = String(saved.id);
-            }
-            window.UI?.showToast('تم حفظ عنوان التسليم.', 'success');
-          } catch (error) {
-            window.UI?.showToast(error.message || 'تعذر حفظ العنوان.', 'error');
-          }
-        });
-      }
-
-      if (pickupSavedSelect) {
-        pickupSavedSelect.addEventListener('change', async () => {
-          const selectedId = pickupSavedSelect.value;
-          const address = savedAddresses.find((item) => String(item.id) === selectedId);
-          if (address) {
-            await applySavedAddress(address, 'pickup');
-          }
-        });
-      }
-
-      if (dropoffSavedSelect) {
-        dropoffSavedSelect.addEventListener('change', async () => {
-          const selectedId = dropoffSavedSelect.value;
-          const address = savedAddresses.find((item) => String(item.id) === selectedId);
-          if (address) {
-            await applySavedAddress(address, 'dropoff');
-          }
-        });
-      }
-
-      function confirmDeleteFor(selectEl) {
-        const id = selectEl?.value;
-        if (!id) {
-          window.UI?.showToast('اختر عنوانًا لحذفه أولاً.', 'info');
-          return;
-        }
-        window.UI?.showModal({
-          title: 'حذف العنوان',
-          message: 'هل أنت متأكد من إزالة هذا العنوان من قائمتك المفضلة؟',
-          confirmText: 'حذف',
-          confirmVariant: 'danger',
-          cancelText: 'تراجع',
-          onConfirm: async () => {
-            try {
-              await deleteAddressById(id);
-              if (selectEl) {
-                selectEl.value = '';
-              }
-              window.UI?.showToast('تم حذف العنوان.', 'info');
-            } catch (error) {
-              window.UI?.showToast(error.message || 'تعذر حذف العنوان.', 'error');
-            }
-          }
-        });
-      }
-
-      if (pickupDeleteBtn) {
-        pickupDeleteBtn.addEventListener('click', () => confirmDeleteFor(pickupSavedSelect));
-      }
-
-      if (dropoffDeleteBtn) {
-        dropoffDeleteBtn.addEventListener('click', () => confirmDeleteFor(dropoffSavedSelect));
-      }
-
-      async function drawRoute() {
-        if (!pickupPoint || !dropoffPoint) {
-          return;
-        }
-        try {
-          window.UI?.setLoading(routeBtn, true, 'جاري حساب المسار...');
-          const result = await mapKit.routeAndEta(map, pickupPoint, dropoffPoint);
-          currentRouteControl = result.control;
-          const price = calculatePrice(result.km);
-          quotedTrip = {
-            pickup: pickupPoint,
-            dropoff: dropoffPoint,
-            km: result.km,
-            minutes: result.minutes,
-            price,
-            pickupLabel: pickupLabelValue,
-            dropoffLabel: dropoffLabelValue
-          };
-          distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
-          durationLabel.textContent = `${result.minutes} دقيقة`;
-          priceLabel.textContent = `${price.toFixed(2)} ر.س`;
-          pricingCard.classList.remove('hidden');
-          mapKit.fitBounds(map, [pickupMarker, dropoffMarker]);
+          newOrderBtn.classList.remove('hidden');
         } catch (error) {
-          resetRoute();
-          window.UI?.showToast(error.message || 'تعذر رسم المسار. حاول مرة أخرى.', 'error');
-        } finally {
-          window.UI?.setLoading(routeBtn, false, 'عرض المسار');
-        }
-      }
-
-      routeBtn.addEventListener('click', async () => {
-        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
-          window.UI?.showToast('لا يمكن تعديل المسار أثناء وجود طلب نشط.', 'warning');
-          return;
-        }
-        try {
-          resetRoute();
-          resetDriverTracking();
-          const [pickupResult, dropoffResult] = await Promise.all([
-            mapKit.geocode(pickupInput.value),
-            mapKit.geocode(dropoffInput.value)
-          ]);
-          pickupPoint = { lat: pickupResult.lat, lng: pickupResult.lng };
-          dropoffPoint = { lat: dropoffResult.lat, lng: dropoffResult.lng };
-          pickupLabelValue = pickupResult.label;
-          dropoffLabelValue = dropoffResult.label;
-          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
-          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
-          updateSaveButtons();
-          updateMarkers();
-          await drawRoute();
-        } catch (error) {
-          window.UI?.showToast(error.message || 'تحقق من المواقع المدخلة.', 'error');
+          window.UI?.showToast(error.message || 'تعذر إلغاء الطلب.', 'error');
         }
       });
 
-      confirmBtn.addEventListener('click', async () => {
-        if (!quotedTrip) {
-          window.UI?.showToast('الرجاء حساب المسار أولاً.', 'warning');
-          return;
-        }
-        try {
-          window.UI?.setLoading(confirmBtn, true, 'جارٍ إرسال الطلب...');
-          const selectedPaymentMethod =
-            paymentMethodRadios.find((radio) => radio.checked)?.value || 'cash';
-          const payload = {
-            pickup: { ...quotedTrip.pickup, label: quotedTrip.pickupLabel },
-            dropoff: { ...quotedTrip.dropoff, label: quotedTrip.dropoffLabel },
-            paymentMethod: selectedPaymentMethod,
-            pickupLabel: quotedTrip.pickupLabel,
-            dropoffLabel: quotedTrip.dropoffLabel
-          };
-          const response = await fetch(`${config.API_BASE_URL}/api/orders`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${authToken}`
-            },
-            body: JSON.stringify(payload)
-          });
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data?.message || data?.error || 'تعذر إنشاء الطلب.');
-          }
-          currentOrder = data;
-          confirmBtn.disabled = true;
-          confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
-          window.UI?.showToast('تم إرسال الطلب، نبحث عن أقرب مندوب...', 'success');
-          subscribeToOrder(data.id);
-          updateOrderUI(data);
-          if (selectedPaymentMethod === 'card') {
-            initiateCardPayment(data);
-          }
-        } catch (error) {
-          window.UI?.showToast(error.message || 'حدث خلل أثناء إنشاء الطلب.', 'error');
-        } finally {
-          window.UI?.setLoading(confirmBtn, false, 'تأكيد الطلب');
-        }
+      newOrderBtn.addEventListener('click', startNewOrderFlow);
+
+      socket = io(config.API_BASE_URL, {
+        transports: ['websocket'],
+        auth: { token: authToken }
       });
-
-      cancelBtn.addEventListener('click', () => {
-        if (!currentOrder) return;
-        window.UI?.showModal({
-          title: 'تأكيد إلغاء الطلب',
-          message: 'هل أنت متأكد من رغبتك في إلغاء الطلب الحالي؟',
-          confirmText: 'نعم، إلغاء',
-          cancelText: 'تراجع',
-          onConfirm: async () => {
-            try {
-              const response = await fetch(`${config.API_BASE_URL}/api/orders/${currentOrder.id}/cancel`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${authToken}`
-                }
-              });
-              const data = await response.json();
-              if (!response.ok) {
-                throw new Error(data?.message || data?.error || 'تعذر إلغاء الطلب.');
-              }
-              window.UI?.showToast('تم إلغاء الطلب بنجاح.', 'info');
-            } catch (error) {
-              window.UI?.showToast(error.message || 'تعذر إلغاء الطلب.', 'error');
-            }
-          }
-        });
+      socket.on('connect_error', (err) => {
+        console.warn('Socket error', err);
       });
-
-      newOrderBtn.addEventListener('click', () => {
-        resetAll();
-      });
-
-      payCardBtn.addEventListener('click', () => {
-        if (currentOrder) {
-          initiateCardPayment(currentOrder);
-        }
-      });
-
-      map.on('click', (event) => {
-        if (currentOrder && currentOrder.status && currentOrder.status !== 'DELIVERED' && currentOrder.status !== 'CANCELLED') {
-          return;
-        }
-        if (!pickupPoint) {
-          pickupPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
-          pickupLabelValue = formatCoords(pickupPoint);
-          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
-          pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
-          updateMarkers();
-          updateSaveButtons();
-        } else if (!dropoffPoint) {
-          dropoffPoint = { lat: event.latlng.lat, lng: event.latlng.lng };
-          dropoffLabelValue = formatCoords(dropoffPoint);
-          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
-          dropoffInput.value = `${dropoffPoint.lat.toFixed(6)}, ${dropoffPoint.lng.toFixed(6)}`;
-          updateMarkers();
-          updateSaveButtons();
-        }
-      });
-
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((pos) => {
-          map.setView([pos.coords.latitude, pos.coords.longitude], 13);
-          if (!pickupPoint) {
-            pickupPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            pickupLabel.textContent = `الاستلام: ${formatCoords(pickupPoint)}`;
-            pickupInput.value = `${pickupPoint.lat.toFixed(6)}, ${pickupPoint.lng.toFixed(6)}`;
-            updateMarkers();
-            updateSaveButtons();
-          }
-        });
-      }
-
-      function subscribeToOrder(orderId) {
-        if (socket) {
-          socket.emit('order:join', { orderId });
-        }
-      }
-
-      function handleOrderEvent(order) {
-        if (!order || !order.id) return;
-        const previousPaymentStatus = currentOrder?.paymentStatus;
-        currentOrder = order;
-        pickupPoint = order.pickup || pickupPoint;
-        dropoffPoint = order.dropoff || dropoffPoint;
-        if (order.pickupLabel) {
-          pickupLabelValue = order.pickupLabel;
-          pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
-        }
-        if (order.dropoffLabel) {
-          dropoffLabelValue = order.dropoffLabel;
-          dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
-        }
-        updateMarkers();
-        if (order.distanceKm && order.durationMin) {
-          distanceLabel.textContent = `${Number(order.distanceKm).toFixed(2)} كم`;
-          durationLabel.textContent = `${Number(order.durationMin).toFixed(0)} دقيقة`;
-        }
-        const orderPrice =
-          order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
-        if (orderPrice != null) {
-          priceLabel.textContent = `${orderPrice.toFixed(2)} ر.س`;
-          pricingCard.classList.remove('hidden');
-        }
-        updateOrderUI(order);
-        const newPaymentStatus = String(order.paymentStatus || '').toLowerCase();
-        if (previousPaymentStatus && previousPaymentStatus.toLowerCase() !== newPaymentStatus) {
-          if (newPaymentStatus === 'paid') {
-            window.UI?.showToast('تم تأكيد الدفع بنجاح.', 'success');
-          } else if (newPaymentStatus === 'failed') {
-            window.UI?.showToast('لم تكتمل عملية الدفع للطلب.', 'error');
-          }
-        }
-      }
-
-      function handleDriverLocation(payload) {
-        if (!currentOrder || payload.orderId !== currentOrder.id) {
-          return;
-        }
-        const nextPoint = { lat: Number(payload.lat), lng: Number(payload.lng) };
-        if (!driverMarker) {
-          driverMarker = mapKit.addMarker(map, {
-            lat: nextPoint.lat,
-            lng: nextPoint.lng,
-            label: 'المندوب'
-          });
-        } else {
-          mapKit.smoothDriverMarker(driverMarker, lastDriverLatLng, nextPoint);
-        }
-        lastDriverLatLng = nextPoint;
-        if (!driverTrail) {
-          driverTrail = L.polyline([], { color: '#2563eb', weight: 4, opacity: 0.8 }).addTo(map);
-        }
-        const path = driverTrail.getLatLngs();
-        path.push(L.latLng(nextPoint.lat, nextPoint.lng));
-        if (path.length > 100) {
-          driverTrail.setLatLngs(path.slice(path.length - 100));
-        } else {
-          driverTrail.setLatLngs(path);
-        }
-        mapKit.fitBounds(map, [pickupMarker, dropoffMarker, driverMarker]);
-      }
-
-      function stopPaymentPolling() {
-        if (paymentPollTimer) {
-          clearTimeout(paymentPollTimer);
-          paymentPollTimer = null;
-        }
-      }
-
-      function closePaymentModal() {
-        if (paymentModal) {
-          paymentModal.remove();
-          paymentModal = null;
-        }
-      }
-
-      function openPaymentModal(iframeUrl) {
-        closePaymentModal();
-        const wrapper = document.createElement('div');
-        wrapper.className = 'fixed inset-0 z-[9998] flex items-center justify-center bg-slate-900/80 backdrop-blur';
-        wrapper.innerHTML = `
-          <div class="bg-white rounded-3xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden">
-            <div class="px-5 py-4 flex items-center justify-between border-b border-slate-100">
-              <div class="flex items-center gap-2 text-slate-700 font-semibold">
-                <i class="ph ph-credit-card"></i>
-                <span>إتمام الدفع الإلكتروني</span>
-              </div>
-              <button type="button" data-close class="text-slate-400 hover:text-slate-600 transition">
-                <i class="ph ph-x"></i>
-              </button>
-            </div>
-            <iframe src="${iframeUrl}" class="w-full h-[520px]" frameborder="0" allow="payment" title="Paymob Checkout"></iframe>
-          </div>
-        `;
-        wrapper.addEventListener('click', (event) => {
-          if (event.target === wrapper) {
-            closePaymentModal();
-            stopPaymentPolling();
-          }
-        });
-        wrapper.querySelector('[data-close]')?.addEventListener('click', () => {
-          closePaymentModal();
-          stopPaymentPolling();
-        });
-        document.body.appendChild(wrapper);
-        paymentModal = wrapper;
-      }
-
-      function pollOrderPayment(orderId, attempt = 0) {
-        stopPaymentPolling();
-        paymentPollTimer = setTimeout(async () => {
-          try {
-            const response = await fetch(`${config.API_BASE_URL}/v1/orders/${orderId}`, {
-              headers: { Authorization: `Bearer ${authToken}` }
-            });
-            if (response.ok) {
-              const data = await response.json();
-              currentOrder = data;
-              updateOrderUI(data);
-              const statusKey = String(data.paymentStatus || 'pending').toLowerCase();
-              if (statusKey === 'paid') {
-                window.UI?.showToast('تم تأكيد الدفع بنجاح.', 'success');
-                stopPaymentPolling();
-                closePaymentModal();
-                return;
-              }
-              if (statusKey === 'failed') {
-                window.UI?.showToast('لم تكتمل عملية الدفع، حاول مرة أخرى.', 'error');
-                stopPaymentPolling();
-                closePaymentModal();
-                return;
-              }
-            }
-          } catch (error) {
-            console.warn('Failed to poll payment status', error);
-          }
-          if (attempt < 40) {
-            pollOrderPayment(orderId, attempt + 1);
-          } else {
-            window.UI?.showToast('لم يتم تأكيد الدفع بعد، تحقق من السجل لاحقًا.', 'warning');
-            stopPaymentPolling();
-          }
-        }, 3000);
-      }
-
-      function startPaymentPolling(orderId) {
-        pollOrderPayment(orderId, 0);
-      }
-
-      async function initiateCardPayment(order) {
-        if (!order?.id) return;
-        try {
-          const response = await fetch(`${config.API_BASE_URL}/v1/pay/paymob/init`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${authToken}`
-            },
-            body: JSON.stringify({ orderId: order.id })
-          });
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data?.message || 'تعذر بدء عملية الدفع');
-          }
-          if (!data?.iframe_url) {
-            if (String(data?.status).toLowerCase() === 'paid') {
-              window.UI?.showToast('الطلب مدفوع بالفعل.', 'success');
-              return;
-            }
-            throw new Error('رابط الدفع غير متاح حاليًا.');
-          }
-          openPaymentModal(data.iframe_url);
-          startPaymentPolling(order.id);
-        } catch (error) {
-          window.UI?.showToast(error.message || 'فشل تهيئة الدفع الإلكتروني.', 'error');
-        }
-      }
-
-      function setupSocket() {
-        socket = io(config.API_BASE_URL, {
-          transports: ['websocket'],
-          auth: { token: authToken }
-        });
-        socket.on('connect_error', (error) => {
-          window.UI?.showToast(error.message || 'تعذر الاتصال بالتحديثات اللحظية.', 'error');
-        });
-        socket.on('order:created', handleOrderEvent);
-        socket.on('order:driver_assigned', handleOrderEvent);
-        socket.on('order:status', handleOrderEvent);
-        socket.on('driver:location', handleDriverLocation);
-      }
-
-      async function resumeActiveOrder() {
-        try {
-          const response = await fetch(`${config.API_BASE_URL}/v1/orders/my?role=customer`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          });
-          if (!response.ok) return;
-          const history = await response.json();
-          if (!Array.isArray(history)) return;
-          const activeSummary = history.find((order) => !['DELIVERED', 'CANCELLED'].includes(order.status));
-          if (!activeSummary) return;
-
-          const detailsResponse = await fetch(`${config.API_BASE_URL}/v1/orders/${activeSummary.id}`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          });
-          if (!detailsResponse.ok) return;
-          const active = await detailsResponse.json();
-          pickupPoint = active.pickup;
-          dropoffPoint = active.dropoff;
-          if (active.pickupLabel) {
-            pickupLabelValue = active.pickupLabel;
-            pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
-          } else if (pickupPoint) {
-            pickupLabelValue = formatCoords(pickupPoint);
-            pickupLabel.textContent = `الاستلام: ${pickupLabelValue}`;
-          }
-          if (active.dropoffLabel) {
-            dropoffLabelValue = active.dropoffLabel;
-            dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
-          } else if (dropoffPoint) {
-            dropoffLabelValue = formatCoords(dropoffPoint);
-            dropoffLabel.textContent = `التسليم: ${dropoffLabelValue}`;
-          }
-          updateMarkers();
-          try {
-            const result = await mapKit.routeAndEta(map, pickupPoint, dropoffPoint);
-            currentRouteControl = result.control;
-            distanceLabel.textContent = `${result.km.toFixed(2)} كم`;
-            durationLabel.textContent = `${result.minutes} دقيقة`;
-            const resumeAmount =
-              active.priceTotal != null
-                ? Number(active.priceTotal)
-                : active.price != null
-                ? Number(active.price)
-                : calculatePrice(result.km);
-            priceLabel.textContent = `${resumeAmount.toFixed(2)} ر.س`;
-            pricingCard.classList.remove('hidden');
-          } catch (error) {
-            console.warn('Failed to redraw route for active order', error);
-          }
-          currentOrder = active;
-          subscribeToOrder(active.id);
-          updateOrderUI(active);
-        } catch (error) {
-          console.warn('Failed to resume order', error);
-        }
-      }
-
-      setupSocket();
-      await resumeActiveOrder();
+      socket.on('order:created', handleOrderUpdate);
+      socket.on('order:status', handleOrderUpdate);
+      socket.on('order:driver_assigned', handleOrderUpdate);
+      socket.on('driver:location', handleDriverLocation);
     });
   </script>
-  <script src="/assets/js/lang-boot.js" defer></script>
-  <script src="/assets/js/topbar.js" defer></script>
 </body>
 </html>

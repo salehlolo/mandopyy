@@ -1737,6 +1737,57 @@ app.post('/v1/pay/paymob/webhook', async (req, res, next) => {
   }
 });
 
+app.get('/v1/payments/:orderId/last', authenticate, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!Number.isFinite(orderId)) {
+      throw new HttpError(400, 'Invalid order id');
+    }
+    const details = await getOrderDetails(orderId);
+    if (!details) {
+      throw new HttpError(404, 'Order not found');
+    }
+    const isCustomer = details.customer?.id === req.user.id;
+    const isDriver = details.driver?.id === req.user.id;
+    if (!isCustomer && !isDriver) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    const payment = await dbGet(
+      'SELECT status, raw FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+      [orderId]
+    );
+    if (!payment) {
+      return res.json({ status: null, reason: null });
+    }
+    let reason = null;
+    if (payment.raw) {
+      try {
+        const parsed = JSON.parse(payment.raw);
+        if (parsed && typeof parsed === 'object') {
+          reason =
+            parsed?.data?.message ||
+            parsed?.data?.txn_response_message ||
+            parsed?.data?.gateway_response ||
+            parsed?.message ||
+            (parsed?.order?.error_occured ? 'error_occured' : null) ||
+            (parsed?.error_occured ? 'transaction_declined' : null);
+          if (Array.isArray(parsed?.log) && !reason) {
+            const msg = parsed.log.find((entry) => typeof entry?.message === 'string');
+            if (msg) {
+              reason = msg.message;
+            }
+          }
+        }
+      } catch (parseError) {
+        console.warn('Failed to parse payment raw JSON', parseError);
+      }
+    }
+    res.json({ status: payment.status || null, reason: reason || null });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/orders/active', authenticate, async (req, res, next) => {
   try {
     const row = await dbGet(
