@@ -238,17 +238,46 @@
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       const config = window.__APP_CONFIG__ || {};
-      const APP_NAME = window.__APP_NAME__ || 'MANDUBO';
-      const mapKit = window.MapKit;
-      if (!mapKit) {
+      const guard = document.getElementById('auth-guard');
+      const app = document.getElementById('app');
+
+      // 1) الحارس أولاً
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        guard.classList.remove('hidden');
+        document.getElementById('guard-mock-btn')?.addEventListener('click', () => {
+          localStorage.setItem('authToken', 'dev-token');
+          location.reload();
+        });
+        document.getElementById('guard-back-btn')?.addEventListener('click', () => {
+          location.href = '/index.html';
+        });
+        return;
+      }
+      guard.classList.add('hidden');
+      app.classList.remove('hidden');
+
+      // 2) انتظر MapKit بدل ما ترجع فورًا وتسيب الصفحة فاضية
+      async function waitForMapKit(ms = 4000) {
+        const start = performance.now();
+        while (!window.MapKit && performance.now() - start < ms) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!window.MapKit) {
+          throw new Error('مكتبة الخرائط لم تُحمّل');
+        }
+        return window.MapKit;
+      }
+
+      let mapKit;
+      try {
+        mapKit = await waitForMapKit();
+      } catch (error) {
         window.UI?.showToast('مكتبة الخرائط غير متاحة حاليًا.', 'error');
         return;
       }
-      const authToken = localStorage.getItem('authToken');
-      const guard = document.getElementById('auth-guard');
-      const app = document.getElementById('app');
-      const guardMockBtn = document.getElementById('guard-mock-btn');
-      const guardBackBtn = document.getElementById('guard-back-btn');
+
+      const APP_NAME = window.__APP_NAME__ || 'MANDUBO';
       const logoutBtn = document.getElementById('logout-btn');
 
       const pickupInput = document.getElementById('pickup-input');
@@ -282,21 +311,6 @@
       const orderPaymentStatusEl = document.getElementById('order-payment-status');
       const orderPinEl = document.getElementById('order-pin');
       const historyBtn = document.getElementById('history-btn');
-
-      guardMockBtn.addEventListener('click', () => {
-        localStorage.setItem('authToken', 'dev-token');
-        window.location.reload();
-      });
-      guardBackBtn.addEventListener('click', () => {
-        window.location.href = '/index.html';
-      });
-
-      if (!authToken) {
-        guard.classList.remove('hidden');
-        return;
-      }
-      guard.classList.add('hidden');
-      app.classList.remove('hidden');
 
       await refreshSavedAddresses();
 
