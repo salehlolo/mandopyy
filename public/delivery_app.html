@@ -18,7 +18,11 @@
   <script defer src="/assets/js/ui.js"></script>
   <script defer src="/assets/js/map.js"></script>
   <style>
+    :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
     body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f8fafc; }
+    .brand { color: var(--brand); }
+    .btn-brand { background: var(--brand); color: #fff; }
+    .btn-brand:hover { background: var(--brand-600); }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen">
@@ -49,7 +53,7 @@
       <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
         <div>
           <p class="text-xs text-slate-400">مرحبًا بك في</p>
-          <h1 class="text-xl font-semibold text-slate-800">MANDUBO – طلب مندوب محلي</h1>
+          <h2 class="brand text-xl font-semibold" style="text-align:center">طلب مندوب محلي – <b>MANDUBO</b></h2>
         </div>
         <div class="flex items-center gap-3">
           <button id="history-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">

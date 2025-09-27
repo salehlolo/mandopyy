@@ -28,7 +28,7 @@ describe('Phone OTP authentication', () => {
 
     expect(requestResponse.body).toMatchObject({ success: true });
     expect(requestResponse.body.mock).toBe(true);
-    expect(requestResponse.body.code).toHaveLength(4);
+    expect(requestResponse.body.code).toHaveLength(6);
 
     const verifyResponse = await request(app)
       .post('/api/auth/otp/verify')

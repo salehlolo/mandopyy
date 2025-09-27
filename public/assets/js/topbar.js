@@ -9,7 +9,7 @@
   :root{--tb-h:56px}
   .topbar{position:sticky;top:0;inset-inline:0;height:var(--tb-h);background:#fff;border-bottom:1px solid #eee;
           display:flex;align-items:center;justify-content:space-between;padding:0 10px;z-index:1000}
-  .brand{font-weight:700;font-size:16px;color:#0f73ff;letter-spacing:.03em}
+  .brand{font-weight:700;font-size:16px;color:var(--brand,#0f73ff);letter-spacing:.03em}
   .actions{display:flex;gap:8px}
   .icon-btn{appearance:none;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:8px;min-width:40px;
             display:inline-flex;align-items:center;justify-content:center}
@@ -35,6 +35,7 @@
   // ---------- SVG ----------
   const I = {
     history: '<svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 1 1-6.36 2.64L4 7v6h6l-2.24-2.24A6 6 0 1 0 13 5v2h-2V3h2z"/></svg>',
+    profile: '<svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/></svg>',
     settings:'<svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm9 4a7.9 7.9 0 0 0-.14-1.5l2.09-1.63-2-3.46-2.54 1a8.08 8.08 0 0 0-2.61-1.52L13.5 2h-3L9.2 3.89a8.08 8.08 0 0 0-2.61 1.52l-2.54-1-2 3.46L4.14 10.5A7.9 7.9 0 0 0 4 12c0 .51.05 1 .14 1.5L2.05 15.1l2 3.46 2.54-1a8.08 8.08 0 0 0 2.61 1.52L10.5 22h3l1.3-1.89a8.08 8.08 0 0 0 2.61-1.52l2.54 1 2-3.46-2.09-1.63c.09-.5.14-.99.14-1.5z"/></svg>',
     more:    '<svg viewBox="0 0 24 24"><path d="M6 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm8 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm8 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"/></svg>',
     star:    '<svg viewBox="0 0 24 24"><path d="M12 17.3 6 21l1.9-6.5L2 9.2l6.6-.5L12 2l3.4 6.7 6.6.5-5.9 5.3L18 21z"/></svg>',
@@ -53,6 +54,7 @@
     <div class="brand" aria-label="${APP_NAME}">${APP_NAME}</div>
     <nav class="actions" aria-label="أوامر سريعة">
       <button id="tb-history" class="icon-btn" title="سجل الطلبات" aria-label="سجل الطلبات">${I.history}</button>
+      <button id="tb-profile" class="icon-btn" title="الملف الشخصي" aria-label="الملف الشخصي">${I.profile}</button>
       <button id="tb-settings" class="icon-btn" title="الإعدادات" aria-label="الإعدادات">${I.settings}</button>
       <button id="tb-more" class="icon-btn" title="المزيد" aria-label="المزيد">${I.more}</button>
     </nav>
@@ -121,6 +123,7 @@
   });
 
   document.getElementById('tb-history').onclick = ()=> location.href='/orders_history.html';
+  document.getElementById('tb-profile').onclick = ()=> location.href='/profile.html';
   document.getElementById('tb-settings').onclick = ()=> modalBg.classList.add('show');
   document.getElementById('btnCloseSet').onclick = ()=> modalBg.classList.remove('show');
   document.getElementById('btnSaveSet').onclick = ()=>{

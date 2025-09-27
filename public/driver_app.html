@@ -35,6 +35,8 @@
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <script defer src="/assets/js/ui.js"></script>
     <style>
+        :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
+        .brand{ color: var(--brand); }
         html, body {
             font-family: 'Tajawal', 'Inter', sans-serif;
             background-color: #f1f5f9;
@@ -628,6 +630,13 @@
                 const data = await response.json();
                 if (!response.ok) {
                     throw new Error(data?.message || 'تعذر التحقق من الرمز.');
+                }
+                if (data?.temporary && data?.token) {
+                    localStorage.setItem('tempSetPassToken', data.token);
+                    localStorage.setItem('setPasswordNext', '/driver_app.html');
+                    setAuthAlert('يرجى تعيين كلمة مرور جديدة لإكمال التسجيل.', 'info');
+                    location.href = '/set_password.html';
+                    return;
                 }
                 if (!data?.token) {
                     throw new Error('استجابة غير متوقعة من الخادم.');

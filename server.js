@@ -10,6 +10,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const bcrypt = require('bcrypt');
 const paymobService = require('./services/paymob');
 const { genCode6, sha256, now, ttlMs } = require('./utils/otp');
 let twilioClient = null;
@@ -46,6 +47,10 @@ const CONFIG = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
   twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
   environment: process.env.NODE_ENV || 'development'
+};
+
+const TEMP_TOKEN_PURPOSES = {
+  SET_PASSWORD: 'set_password'
 };
 
 const paymobClient = paymobService.createClient({
@@ -234,6 +239,10 @@ async function migrateUsersTable() {
         password_hash TEXT,
         phone_number TEXT,
         name TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        dob TEXT,
+        gender TEXT,
         role TEXT DEFAULT 'customer',
         oauth_provider TEXT,
         oauth_sub TEXT,
@@ -258,17 +267,25 @@ async function migrateUsersTable() {
           password_hash TEXT,
           phone_number TEXT,
           name TEXT,
+          first_name TEXT,
+          last_name TEXT,
+          dob TEXT,
+          gender TEXT,
           role TEXT DEFAULT 'customer',
           oauth_provider TEXT,
           oauth_sub TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
-      await dbRun(`INSERT INTO users (id, email, password_hash, phone_number, name, role, oauth_provider, oauth_sub, created_at)
+      await dbRun(`INSERT INTO users (id, email, password_hash, phone_number, name, first_name, last_name, dob, gender, role, oauth_provider, oauth_sub, created_at)
                    SELECT id,
                           NULL,
                           NULL,
                           phone_number,
                           name,
+                          NULL,
+                          NULL,
+                          NULL,
+                          NULL,
                           role,
                           NULL,
                           NULL,
@@ -277,6 +294,10 @@ async function migrateUsersTable() {
       await dbRun('DROP TABLE users_old');
     } else {
       await ensureColumn('users', 'password_hash', 'password_hash TEXT');
+      await ensureColumn('users', 'first_name', 'first_name TEXT');
+      await ensureColumn('users', 'last_name', 'last_name TEXT');
+      await ensureColumn('users', 'dob', 'dob TEXT');
+      await ensureColumn('users', 'gender', 'gender TEXT');
       await ensureColumn('users', 'oauth_provider', 'oauth_provider TEXT');
       await ensureColumn('users', 'oauth_sub', 'oauth_sub TEXT');
     }
@@ -403,6 +424,12 @@ function signUserToken(user) {
   return jwt.sign({ sub: user.id, role: user.role }, CONFIG.jwtSecret, { expiresIn: '7d' });
 }
 
+function signTemporaryToken(user, purpose, expiresIn = '15m') {
+  return jwt.sign({ sub: user.id, role: user.role, purp: purpose }, CONFIG.jwtSecret, {
+    expiresIn
+  });
+}
+
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
   const R = 6371;
@@ -469,6 +496,21 @@ async function getUserByPhone(phoneNumber) {
   return dbGet('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
 }
 
+function serialiseUserProfile(user) {
+  if (!user) {
+    return null;
+  }
+  return {
+    id: user.id,
+    first_name: user.first_name || '',
+    last_name: user.last_name || '',
+    phone: user.phone_number || '',
+    dob: user.dob || '',
+    gender: user.gender || '',
+    nameFallback: user.name || ''
+  };
+}
+
 async function ensureUserByPhone(phoneNumber, desiredRole = 'customer') {
   const existing = await getUserByPhone(phoneNumber);
   if (existing) {
@@ -490,6 +532,70 @@ const OTP_TTL_MS = ttlMs(OTP_TTL_MINUTES);
 const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const OTP_RATE_LIMIT_MAX = Number(process.env.OTP_RATE_LIMIT_PER_15M || 3);
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 5);
+
+async function requestOtpForPhone(phoneNumber) {
+  if (!phoneNumber || phoneNumber.length < 6) {
+    throw new HttpError(400, 'رقم الجوال غير صالح');
+  }
+
+  const rateKey = `otp:${phoneNumber}`;
+  const existingLimit = await getRateLimit(rateKey);
+  const nowTs = now();
+
+  if (!existingLimit) {
+    await setRateLimit(rateKey, 1, nowTs);
+  } else {
+    const windowStart = Number(existingLimit.window_start);
+    const withinWindow = nowTs - windowStart < OTP_RATE_LIMIT_WINDOW_MS;
+    const nextCount = withinWindow ? Number(existingLimit.count) + 1 : 1;
+    const effectiveWindowStart = withinWindow ? windowStart : nowTs;
+    if (withinWindow && nextCount > OTP_RATE_LIMIT_MAX) {
+      throw new HttpError(429, 'تجاوزت الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
+    }
+    await setRateLimit(rateKey, nextCount, effectiveWindowStart);
+  }
+
+  const code = genCode6();
+  const hash = sha256(code);
+  const expiresAt = nowTs + OTP_TTL_MS;
+  await upsertOtp(phoneNumber, hash, expiresAt);
+  const delivery = await sendOtpSms(phoneNumber, code);
+
+  return {
+    success: true,
+    mock: delivery.mock,
+    expiresIn: Math.floor(OTP_TTL_MS / 1000),
+    code: delivery.mock ? code : undefined
+  };
+}
+
+async function consumeOtp(phoneNumber, code) {
+  if (!code || String(code).trim().length < 4) {
+    throw new HttpError(400, 'رمز التحقق مطلوب');
+  }
+
+  const record = await getOtp(phoneNumber);
+  if (!record) {
+    throw new HttpError(400, 'لا يوجد رمز تحقق لهذا الرقم');
+  }
+
+  if (now() > Number(record.expires_at)) {
+    await deleteOtp(phoneNumber);
+    throw new HttpError(400, 'انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا');
+  }
+
+  if (Number(record.attempts) >= OTP_MAX_ATTEMPTS) {
+    throw new HttpError(400, 'تجاوزت عدد المحاولات المسموح، اطلب رمزًا جديدًا');
+  }
+
+  const providedHash = sha256(String(code).trim());
+  await incrementOtpAttempt(phoneNumber);
+  if (providedHash !== record.code_hash) {
+    throw new HttpError(400, 'رمز التحقق غير صحيح');
+  }
+
+  await deleteOtp(phoneNumber);
+}
 
 async function upsertOtp(phoneNumber, codeHash, expiresAt) {
   await dbRun(
@@ -800,38 +906,8 @@ otpRequestHandlers.forEach((route) => {
     try {
       const { phone } = req.body || {};
       const normalised = normalisePhone(phone);
-      if (!normalised || normalised.length < 6) {
-        throw new HttpError(400, 'رقم الجوال غير صالح');
-      }
-
-      const rateKey = `otp:${normalised}`;
-      const existingLimit = await getRateLimit(rateKey);
-      const nowTs = now();
-      if (!existingLimit) {
-        await setRateLimit(rateKey, 1, nowTs);
-      } else {
-        const windowStart = Number(existingLimit.window_start);
-        const withinWindow = nowTs - windowStart < OTP_RATE_LIMIT_WINDOW_MS;
-        const nextCount = withinWindow ? Number(existingLimit.count) + 1 : 1;
-        const effectiveWindowStart = withinWindow ? windowStart : nowTs;
-        if (withinWindow && nextCount > OTP_RATE_LIMIT_MAX) {
-          throw new HttpError(429, 'تجاوزت الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
-        }
-        await setRateLimit(rateKey, nextCount, effectiveWindowStart);
-      }
-
-      const code = genCode6();
-      const hash = sha256(code);
-      const expiresAt = nowTs + OTP_TTL_MS;
-      await upsertOtp(normalised, hash, expiresAt);
-      const delivery = await sendOtpSms(normalised, code);
-
-      res.json({
-        success: true,
-        mock: delivery.mock,
-        expiresIn: Math.floor(OTP_TTL_MS / 1000),
-        code: delivery.mock ? code : undefined
-      });
+      const payload = await requestOtpForPhone(normalised);
+      res.json(payload);
     } catch (error) {
       next(error);
     }
@@ -847,46 +923,215 @@ otpVerifyHandlers.forEach((route) => {
       if (!normalised || normalised.length < 6) {
         throw new HttpError(400, 'رقم الجوال غير صالح');
       }
-      if (!code || String(code).trim().length < 4) {
-        throw new HttpError(400, 'رمز التحقق مطلوب');
-      }
-
-      const record = await getOtp(normalised);
-      if (!record) {
-        throw new HttpError(400, 'لا يوجد رمز تحقق لهذا الرقم');
-      }
-      if (now() > Number(record.expires_at)) {
-        await deleteOtp(normalised);
-        throw new HttpError(400, 'انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا');
-      }
-      if (Number(record.attempts) >= OTP_MAX_ATTEMPTS) {
-        throw new HttpError(400, 'تجاوزت عدد المحاولات المسموح، اطلب رمزًا جديدًا');
-      }
-
-      const providedHash = sha256(String(code).trim());
-      await incrementOtpAttempt(normalised);
-      if (providedHash !== record.code_hash) {
-        throw new HttpError(400, 'رمز التحقق غير صحيح');
-      }
-
-      await deleteOtp(normalised);
+      await consumeOtp(normalised, code);
 
       const desiredRole = String(role || 'customer').toLowerCase() === 'driver' ? 'driver' : 'customer';
-      const user = await ensureUserByPhone(normalised, desiredRole);
-      await dbRun('UPDATE users SET phone_number = ? WHERE id = ?', [normalised, user.id]);
-      const token = signUserToken(user);
-      const driver = await getDriverById(user.id);
+      let user = await getUserByPhone(normalised);
+      let created = false;
 
+      if (!user) {
+        user = await ensureUserByPhone(normalised, desiredRole);
+        created = true;
+      } else if (desiredRole === 'driver' && user.role !== 'driver') {
+        await dbRun('UPDATE users SET role = ? WHERE id = ?', ['driver', user.id]);
+        user = await getUserById(user.id);
+      }
+
+      await dbRun('UPDATE users SET phone_number = ? WHERE id = ?', [normalised, user.id]);
+
+      const freshUser = await getUserById(user.id);
+      const driver = await getDriverById(freshUser.id);
+      const needsPassword = created || !freshUser.password_hash;
+
+      if (needsPassword) {
+        const tempToken = signTemporaryToken(freshUser, TEMP_TOKEN_PURPOSES.SET_PASSWORD);
+        return res.json({
+          success: true,
+          token: tempToken,
+          role: freshUser.role,
+          temporary: true
+        });
+      }
+
+      const token = signUserToken(freshUser);
       res.json({
         success: true,
         token,
-        role: user.role,
-        isDriverVerified: driver ? Boolean(driver.verified) : null
+        role: freshUser.role,
+        isDriverVerified: driver ? Boolean(driver.verified) : null,
+        temporary: false
       });
     } catch (error) {
       next(error);
     }
   });
+});
+
+const authenticateSetPassword = authenticateWithPurpose(TEMP_TOKEN_PURPOSES.SET_PASSWORD);
+
+app.get('/v1/auth/lookup', async (req, res, next) => {
+  try {
+    const normalised = normalisePhone(req.query.phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
+    }
+    const user = await getUserByPhone(normalised);
+    res.json({ exists: Boolean(user && user.password_hash) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/login', async (req, res, next) => {
+  try {
+    const { phone, password } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6 || !password) {
+      throw new HttpError(400, 'بيانات الدخول غير كاملة');
+    }
+    const user = await getUserByPhone(normalised);
+    if (!user || !user.password_hash) {
+      throw new HttpError(400, 'بيانات الدخول غير صحيحة');
+    }
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      throw new HttpError(400, 'بيانات الدخول غير صحيحة');
+    }
+    const token = signUserToken(user);
+    res.json({ success: true, token, user: serialiseUserProfile(user), role: user.role });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/set', authenticateSetPassword, async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || password.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    const hash = await bcrypt.hash(password, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+    const freshUser = await getUserById(req.user.id);
+    const token = signUserToken(freshUser);
+    res.json({ success: true, token, user: serialiseUserProfile(freshUser), role: freshUser.role });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/forgot', async (req, res, next) => {
+  try {
+    const { phone } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
+    }
+    const user = await getUserByPhone(normalised);
+    if (!user) {
+      throw new HttpError(404, 'لا يوجد مستخدم مرتبط بهذا الرقم');
+    }
+    const payload = await requestOtpForPhone(normalised);
+    res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/reset', async (req, res, next) => {
+  try {
+    const { phone, code, new_password: newPassword } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    await consumeOtp(normalised, code);
+    const user = await getUserByPhone(normalised);
+    if (!user) {
+      throw new HttpError(404, 'المستخدم غير موجود');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+    const freshUser = await getUserById(user.id);
+    const token = signUserToken(freshUser);
+    res.json({ success: true, token, user: serialiseUserProfile(freshUser), role: freshUser.role });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/me', authenticate, async (req, res, next) => {
+  try {
+    res.json(serialiseUserProfile(req.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/v1/me', authenticate, async (req, res, next) => {
+  try {
+    const { first_name, last_name, dob, gender } = req.body || {};
+    const updates = [];
+    const params = [];
+
+    if (first_name !== undefined) {
+      const value = first_name ? String(first_name).trim() : null;
+      updates.push('first_name = ?');
+      params.push(value || null);
+    }
+    if (last_name !== undefined) {
+      const value = last_name ? String(last_name).trim() : null;
+      updates.push('last_name = ?');
+      params.push(value || null);
+    }
+    if (dob !== undefined) {
+      updates.push('dob = ?');
+      params.push(dob ? String(dob).trim() : null);
+    }
+    if (gender !== undefined) {
+      const normalisedGender = gender ? String(gender).toLowerCase() : null;
+      if (normalisedGender && !['male', 'female', 'other'].includes(normalisedGender)) {
+        throw new HttpError(400, 'قيمة النوع غير مدعومة');
+      }
+      updates.push('gender = ?');
+      params.push(normalisedGender);
+    }
+
+    if (updates.length) {
+      params.push(req.user.id);
+      await dbRun(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    const freshUser = await getUserById(req.user.id);
+    res.json({ success: true, user: serialiseUserProfile(freshUser) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/change', authenticate, async (req, res, next) => {
+  try {
+    const { old_password: oldPassword, new_password: newPassword } = req.body || {};
+    if (!newPassword || newPassword.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    if (!req.user.password_hash) {
+      throw new HttpError(400, 'لم يتم تعيين كلمة مرور لهذا الحساب بعد');
+    }
+    const valid = await bcrypt.compare(oldPassword || '', req.user.password_hash);
+    if (!valid) {
+      throw new HttpError(400, 'كلمة المرور الحالية غير صحيحة');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+    const freshUser = await getUserById(req.user.id);
+    res.json({ success: true, user: serialiseUserProfile(freshUser) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // --- Auth middleware ---
@@ -902,15 +1147,48 @@ async function authenticate(req, res, next) {
     } catch (error) {
       throw new HttpError(401, 'Unauthorized');
     }
+    if (payload.purp) {
+      throw new HttpError(401, 'يتطلب هذا الإجراء جلسة دخول كاملة');
+    }
     const user = await getUserById(payload.sub);
     if (!user) {
       throw new HttpError(401, 'Unauthorized');
     }
     req.user = user;
+    req.jwt = payload;
     next();
   } catch (error) {
     next(error);
   }
+}
+
+function authenticateWithPurpose(purpose) {
+  return async (req, res, next) => {
+    try {
+      const token = req.headers.authorization?.split(' ')[1];
+      if (!token) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      let payload;
+      try {
+        payload = jwt.verify(token, CONFIG.jwtSecret);
+      } catch (error) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      if (payload.purp !== purpose) {
+        throw new HttpError(403, 'رمز غير صالح لهذه العملية');
+      }
+      const user = await getUserById(payload.sub);
+      if (!user) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      req.user = user;
+      req.jwt = payload;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 // --- Driver Management ---

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MANDUBO – الملف الشخصي</title>
+<link rel="stylesheet" href="/assets/base.css"/>
+<style>
+:root{--brand:#0F73FF;--brand-600:#0d63dd;}
+.btn{padding:10px 14px;border-radius:12px;border:1px solid #e5e7eb;background:#fff;color:#1f2937;font-size:15px;min-width:120px;}
+.btn-brand{background:var(--brand);color:#fff;border-color:var(--brand);}
+.btn-brand:hover{background:var(--brand-600);}
+main{max-width:720px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:20px;box-shadow:0 12px 36px rgba(15,115,255,0.05);}
+header.top{padding:16px 24px;font-weight:700;font-size:20px;background:#fff;border-bottom:1px solid #e5e7eb;text-align:center;}
+</style>
+<script src="/config.js"></script>
+<script src="/assets/js/topbar.js" defer></script>
+</head>
+<body>
+<header class="top brand top">الملف الشخصي – <b>MANDUBO</b></header>
+<main>
+  <h3 style="margin-top:0">بيانات الحساب</h3>
+  <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+    <div><label>الاسم الأول</label><input id="fn" class="input" /></div>
+    <div><label>اسم العائلة</label><input id="ln" class="input" /></div>
+    <div style="grid-column:1/-1"><label>رقم الهاتف (مقيد)</label><input id="ph" class="input" disabled /></div>
+    <div><label>تاريخ الميلاد</label><input id="dob" type="date" class="input" /></div>
+    <div>
+      <label>النوع</label>
+      <select id="gender" class="input">
+        <option value="">غير محدد</option>
+        <option value="male">ذكر</option>
+        <option value="female">أنثى</option>
+        <option value="other">آخر</option>
+      </select>
+    </div>
+  </div>
+  <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
+    <button id="saveProfile" class="btn btn-brand">حفظ</button>
+    <a href="/delivery_app.html" class="btn" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;">رجوع</a>
+  </div>
+
+  <hr style="margin:28px 0"/>
+
+  <h3>تغيير كلمة المرور</h3>
+  <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+    <div><label>كلمة المرور الحالية</label><input id="oldp" type="password" class="input" autocomplete="current-password" /></div>
+    <div><label>كلمة مرور جديدة</label><input id="newp" type="password" class="input" autocomplete="new-password" /></div>
+    <div><label>تأكيد كلمة المرور</label><input id="newp2" type="password" class="input" autocomplete="new-password" /></div>
+  </div>
+  <div style="margin-top:18px;">
+    <button id="savePass" class="btn">تغيير كلمة المرور</button>
+  </div>
+</main>
+
+<script>
+const { API_BASE_URL } = window.__APP_CONFIG__||{};
+const token = localStorage.getItem('authToken');
+if(!token){ location.href='/index.html'; }
+
+(async ()=>{
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/me`,{ headers:{ Authorization:`Bearer ${token}` }});
+    if(!r.ok){ throw new Error('فشل تحميل الملف الشخصي'); }
+    const d = await r.json();
+    document.getElementById('fn').value = d.first_name || '';
+    document.getElementById('ln').value = d.last_name || '';
+    document.getElementById('ph').value = d.phone || '';
+    document.getElementById('dob').value = d.dob || '';
+    document.getElementById('gender').value = d.gender || '';
+  }catch(err){
+    alert(err.message||'تعذر تحميل الملف الشخصي');
+  }
+})();
+
+document.getElementById('saveProfile').onclick = async ()=>{
+  const body = {
+    first_name: document.getElementById('fn').value.trim(),
+    last_name: document.getElementById('ln').value.trim(),
+    dob: document.getElementById('dob').value || null,
+    gender: document.getElementById('gender').value || null
+  };
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/me`,{
+      method:'PATCH',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d?.message||'فشل الحفظ'); }
+    alert('تم حفظ الملف الشخصي');
+  }catch(err){
+    alert(err.message||'لم يتم الحفظ');
+  }
+};
+
+document.getElementById('savePass').onclick = async ()=>{
+  const current = document.getElementById('oldp').value;
+  const next = document.getElementById('newp').value;
+  const confirm = document.getElementById('newp2').value;
+  if(next.length<6 || next!==confirm){ return alert('تحقق من كلمة المرور الجديدة'); }
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/auth/password/change`,{
+      method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+      body: JSON.stringify({ old_password: current, new_password: next })
+    });
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d?.message||'فشل تغيير كلمة المرور'); }
+    document.getElementById('oldp').value='';
+    document.getElementById('newp').value='';
+    document.getElementById('newp2').value='';
+    alert('تم تغيير كلمة المرور');
+  }catch(err){
+    alert(err.message||'لم يتم تغيير كلمة المرور');
+  }
+};
+</script>
+</body>
+</html>
