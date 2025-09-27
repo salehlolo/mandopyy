@@ -6,6 +6,8 @@
   <title>MANDUBO – تطبيق العميل</title>
   <script src="/config.js"></script>
   <script>window.__APP_NAME__ = 'MANDUBO';</script>
+  <script src="/assets/js/i18n.js"></script>
+  <script>i18n.init();i18n.apply();</script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -51,18 +53,15 @@
   <div id="app" class="hidden min-h-screen flex flex-col">
     <header class="bg-white shadow-sm border-b border-slate-100">
       <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div>
-          <p class="text-xs text-slate-400">مرحبًا بك في</p>
-          <h2 class="brand text-xl font-semibold" style="text-align:center">طلب مندوب محلي – <b>MANDUBO</b></h2>
-        </div>
+        <h2 class="brand text-xl font-semibold" style="text-align:center;margin:10px 0">MANDUBO</h2>
         <div class="flex items-center gap-3">
           <button id="history-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
             <i class="ph ph-clock-counter-clockwise"></i>
-            <span>سجل الطلبات</span>
+            <span data-i18n="menu_history">سجل الطلبات</span>
           </button>
           <button id="logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
             <i class="ph ph-sign-out"></i>
-            <span>تسجيل الخروج</span>
+            <span data-i18n="menu_logout">تسجيل الخروج</span>
           </button>
         </div>
       </div>

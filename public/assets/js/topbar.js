@@ -51,12 +51,12 @@
   header.className = 'topbar';
   header.dir = 'rtl';
   header.innerHTML = `
-    <div class="brand" aria-label="${APP_NAME}">${APP_NAME}</div>
+    <div class="brand" aria-label="${APP_NAME}" data-i18n="brand">${APP_NAME}</div>
     <nav class="actions" aria-label="أوامر سريعة">
-      <button id="tb-history" class="icon-btn" title="سجل الطلبات" aria-label="سجل الطلبات">${I.history}</button>
-      <button id="tb-profile" class="icon-btn" title="الملف الشخصي" aria-label="الملف الشخصي">${I.profile}</button>
-      <button id="tb-settings" class="icon-btn" title="الإعدادات" aria-label="الإعدادات">${I.settings}</button>
-      <button id="tb-more" class="icon-btn" title="المزيد" aria-label="المزيد">${I.more}</button>
+      <button id="tb-history" class="icon-btn" title="سجل الطلبات" aria-label="سجل الطلبات" data-i18n-title="menu_history">${I.history}</button>
+      <button id="tb-profile" class="icon-btn" title="الملف الشخصي" aria-label="الملف الشخصي" data-i18n-title="menu_profile">${I.profile}</button>
+      <button id="tb-settings" class="icon-btn" title="الإعدادات" aria-label="الإعدادات" data-i18n-title="menu_settings">${I.settings}</button>
+      <button id="tb-more" class="icon-btn" title="المزيد" aria-label="المزيد" data-i18n-title="menu_more">${I.more}</button>
     </nav>
   `;
   document.body.prepend(header);
@@ -71,7 +71,15 @@
     <div class="item" id="mi-share">${I.share}<span>مشاركة رابط التتبّع</span></div>
     <div class="item" id="mi-help">${I.help}<span>مساعدة</span></div>
     <div class="item" id="mi-about">${I.info}<span>عن التطبيق</span></div>
-    <div class="item" id="mi-logout">${I.logout}<span>تسجيل الخروج</span></div>
+    <div class="item" id="mi-lang">
+      <span style="margin-inline-end:8px">🌐</span>
+      <span data-i18n="menu_language">اللغة</span>
+      <div style="margin-inline-start:auto;display:flex;gap:6px;align-items:center">
+        <label><input type="radio" name="lang" value="ar"> <span data-i18n="lang_ar">العربية</span></label>
+        <label><input type="radio" name="lang" value="en"> <span data-i18n="lang_en">English</span></label>
+      </div>
+    </div>
+    <div class="item" id="mi-logout">${I.logout}<span data-i18n="menu_logout">تسجيل الخروج</span></div>
   `;
   document.body.appendChild(menu);
 
@@ -163,3 +171,31 @@
   if(S.dark) document.documentElement.classList.add('dark');
 
 })();
+
+// i18n init and bindings for topbar labels
+if (window.i18n) {
+  window.i18n.init();
+  const radios = document.querySelectorAll('input[name="lang"]');
+  if (radios.length) {
+    const cur = window.i18n.get();
+    radios.forEach(radio => {
+      if (radio.value === cur) radio.checked = true;
+      radio.onchange = () => {
+        window.i18n.set(radio.value);
+        location.reload();
+      };
+    });
+  }
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (key) el.textContent = window.i18n.t(key);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    if (key) {
+      const translated = window.i18n.t(key);
+      el.title = translated;
+      el.setAttribute('aria-label', translated);
+    }
+  });
+}

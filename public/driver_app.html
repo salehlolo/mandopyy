@@ -6,6 +6,8 @@
     <title>MANDUBO – تطبيق السائق</title>
     <script src="/config.js"></script>
     <script>window.__APP_NAME__ = 'MANDUBO';</script>
+    <script src="/assets/js/i18n.js"></script>
+    <script>i18n.init();i18n.apply();</script>
   <style>
     .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
     .dev-menu:hover{opacity:1}
@@ -37,6 +39,8 @@
     <style>
         :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
         .brand{ color: var(--brand); }
+        .btn-brand{background:var(--brand);border-color:var(--brand);color:#fff}
+        .btn-brand:hover{background:var(--brand-600)}
         html, body {
             font-family: 'Tajawal', 'Inter', sans-serif;
             background-color: #f1f5f9;
@@ -74,6 +78,7 @@
     </style>
 </head>
 <body class="min-h-screen">
+    <h2 class="brand" style="text-align:center;margin:10px 0">MANDUBO</h2>
     <!-- Authentication -->
     <div id="auth-container" class="h-screen w-screen flex items-center justify-center p-4">
         <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">

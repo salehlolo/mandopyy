@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MANDUBO – تسجيل الدخول</title>
   <script src="/config.js"></script>
+  <script src="/assets/js/i18n.js"></script>
+  <script>i18n.init();i18n.apply();</script>
   <style>
     :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
     body{font-family:"Tajawal",system-ui,-apple-system,"Segoe UI",sans-serif;background:#f3f5f9;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
@@ -29,7 +31,7 @@
 </head>
 <body>
   <main class="card">
-    <h1 class="brand">مرحبا بك في <b>MANDUBO</b></h1>
+    <h2 class="brand" style="text-align:center;margin:10px 0">MANDUBO</h2>
     <p class="hint">أدخل رقم هاتفك للمتابعة.</p>
 
     <label for="phone">رقم الجوال</label>

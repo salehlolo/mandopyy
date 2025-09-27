@@ -10,16 +10,25 @@
 .btn{padding:10px 14px;border-radius:12px;border:1px solid #e5e7eb;background:#fff;color:#1f2937;font-size:15px;min-width:120px;}
 .btn-brand{background:var(--brand);color:#fff;border-color:var(--brand);}
 .btn-brand:hover{background:var(--brand-600);}
+.label{font-size:14px;color:#374151;margin:8px 0 6px;display:block}
+.input{width:100%;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;font-size:15px;}
+.pw{position:relative}
+.eye{position:absolute;inset-inline-end:10px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:13px;color:#6b7280}
+.meter{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:6px 0 4px}
+.meter>div{height:100%;width:0;background:#ef4444;transition:width .25s,background .25s}
+.hint{font-size:12px;color:#6b7280;margin-top:4px}
+.card{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb}
 main{max-width:720px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:20px;box-shadow:0 12px 36px rgba(15,115,255,0.05);}
-header.top{padding:16px 24px;font-weight:700;font-size:20px;background:#fff;border-bottom:1px solid #e5e7eb;text-align:center;}
 </style>
 <script src="/config.js"></script>
+<script src="/assets/js/i18n.js"></script>
+<script>i18n.init();</script>
 <script src="/assets/js/topbar.js" defer></script>
 </head>
 <body>
-<header class="top brand top">الملف الشخصي – <b>MANDUBO</b></header>
+<header class="top brand top"><h2 class="brand" style="text-align:center;margin:10px 0">MANDUBO</h2></header>
 <main>
-  <h3 style="margin-top:0">بيانات الحساب</h3>
+  <h3 style="margin-top:0" data-i18n="profile_title">الملف الشخصي</h3>
   <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
     <div><label>الاسم الأول</label><input id="fn" class="input" /></div>
     <div><label>اسم العائلة</label><input id="ln" class="input" /></div>
@@ -36,27 +45,45 @@ header.top{padding:16px 24px;font-weight:700;font-size:20px;background:#fff;bord
     </div>
   </div>
   <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
-    <button id="saveProfile" class="btn btn-brand">حفظ</button>
-    <a href="/delivery_app.html" class="btn" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;">رجوع</a>
+    <button id="saveProfile" class="btn btn-brand" data-i18n="save">حفظ</button>
+    <a href="/delivery_app.html" class="btn" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;" data-i18n="cancel">رجوع</a>
   </div>
 
   <hr style="margin:28px 0"/>
 
-  <h3>تغيير كلمة المرور</h3>
-  <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
-    <div><label>كلمة المرور الحالية</label><input id="oldp" type="password" class="input" autocomplete="current-password" /></div>
-    <div><label>كلمة مرور جديدة</label><input id="newp" type="password" class="input" autocomplete="new-password" /></div>
-    <div><label>تأكيد كلمة المرور</label><input id="newp2" type="password" class="input" autocomplete="new-password" /></div>
-  </div>
-  <div style="margin-top:18px;">
-    <button id="savePass" class="btn">تغيير كلمة المرور</button>
+  <h3 data-i18n="pass_section">تغيير كلمة المرور</h3>
+  <div class="card" style="max-width:520px">
+    <label class="label" data-i18n="current_password">كلمة المرور الحالية</label>
+    <div class="pw">
+      <input id="oldp" class="input" type="password" autocomplete="current-password"/>
+      <button class="eye" type="button" onclick="toggle('oldp')">إظهار</button>
+    </div>
+
+    <label class="label" data-i18n="new_password">كلمة مرور جديدة</label>
+    <div class="pw">
+      <input id="newp" class="input" type="password" autocomplete="new-password"/>
+      <button class="eye" type="button" onclick="toggle('newp')">إظهار</button>
+    </div>
+    <div class="meter"><div id="mbar2"></div></div>
+    <div class="hint" id="mtext2" data-i18n="password_strength">قوة كلمة المرور</div>
+
+    <label class="label" data-i18n="confirm_password">تأكيد كلمة المرور</label>
+    <div class="pw">
+      <input id="newp2" class="input" type="password" autocomplete="new-password"/>
+      <button class="eye" type="button" onclick="toggle('newp2')">إظهار</button>
+    </div>
+
+    <button id="savePass" class="btn btn-brand" data-i18n="change_password">تغيير كلمة المرور</button>
   </div>
 </main>
 
 <script>
+function toggle(id){ const el=document.getElementById(id); el.type=(el.type==='password'?'text':'password'); }
+function score(s){ let n=0; if(s.length>=8) n++; if(/[A-Z]/.test(s)) n++; if(/[a-z]/.test(s)) n++; if(/\d/.test(s)) n++; if(/[^\w\s]/.test(s)) n++; return Math.min(n,5); }
 const { API_BASE_URL } = window.__APP_CONFIG__||{};
 const token = localStorage.getItem('authToken');
 if(!token){ location.href='/index.html'; }
+i18n.apply();
 
 (async ()=>{
   try{
@@ -93,6 +120,19 @@ document.getElementById('saveProfile').onclick = async ()=>{
   }
 };
 
+newp.oninput = ()=>{
+  const sc=score(newp.value); mbar2.style.width=(sc*20)+'%';
+  mbar2.style.background=['#ef4444','#f59e0b','#f59e0b','#10b981','#10b981'][sc-1] || '#ef4444';
+  const labels = {
+    ar: ['ضعيفة','ضعيفة','متوسطة','قوية','قوية'],
+    en: ['Weak','Weak','Medium','Strong','Strong']
+  };
+  const lang = (window.i18n?.get && window.i18n.get()) || 'ar';
+  const list = labels[lang] || labels.ar;
+  const idx = Math.max(0, Math.min(sc-1, list.length-1));
+  mtext2.textContent = list[idx];
+};
+
 document.getElementById('savePass').onclick = async ()=>{
   const current = document.getElementById('oldp').value;
   const next = document.getElementById('newp').value;
@@ -113,6 +153,8 @@ document.getElementById('savePass').onclick = async ()=>{
     alert(err.message||'لم يتم تغيير كلمة المرور');
   }
 };
+
+newp.oninput();
 </script>
 </body>
 </html>

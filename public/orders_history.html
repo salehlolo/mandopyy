@@ -6,6 +6,8 @@
   <title>MANDUBO – سجل الطلبات</title>
   <script src="/config.js"></script>
   <script>window.__APP_NAME__ = 'MANDUBO';</script>
+  <script src="/assets/js/i18n.js"></script>
+  <script>i18n.init();i18n.apply();</script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <script defer src="/assets/js/ui.js"></script>
@@ -13,10 +15,13 @@
     :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
     body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f1f5f9; }
     .brand { color: var(--brand); }
+    .btn-brand{background:var(--brand);border-color:var(--brand);color:#fff}
+    .btn-brand:hover{background:var(--brand-600)}
   </style>
 </head>
 <body class="min-h-screen">
   <div class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+    <h2 class="brand" style="text-align:center;margin:10px 0">MANDUBO</h2>
     <header class="bg-white rounded-3xl shadow px-6 py-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div>
         <p class="text-xs text-slate-400">لوحة المتابعة</p>
