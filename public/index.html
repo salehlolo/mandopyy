@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Waslny – تسجيل العملاء</title>
+  <script src="/config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script defer src="/assets/js/ui.js"></script>
+  <style>
+    body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f1f5f9; }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center px-4">
+  <main class="max-w-md w-full">
+    <section class="bg-white rounded-3xl shadow-xl px-7 py-8 space-y-6">
+      <header class="space-y-2 text-center">
+        <div class="inline-flex items-center justify-center gap-2 text-blue-600">
+          <i class="ph ph-map-trifold text-2xl"></i>
+          <span class="text-sm font-semibold uppercase tracking-wide">Waslny</span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">تسجيل الدخول برقم الجوال</h1>
+        <p class="text-sm text-slate-500">أدخل رقمك الجوال لاستلام رمز التحقق لمرة واحدة (OTP).</p>
+      </header>
+
+      <div class="space-y-2">
+        <label for="phone-input" class="text-xs font-semibold text-slate-500">رقم الجوال</label>
+        <input id="phone-input" type="tel" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400" placeholder="مثال: 01012345678" autocomplete="tel" />
+        <p id="otp-hint" class="text-xs text-slate-500 hidden">أرسلنا لك رمزاً مكوّناً من 6 أرقام. أدخله أدناه خلال 5 دقائق.</p>
+      </div>
+
+      <div id="otp-section" class="space-y-2 hidden">
+        <label for="otp-input" class="text-xs font-semibold text-slate-500">رمز التحقق</label>
+        <input id="otp-input" inputmode="numeric" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400 tracking-[0.4em] text-center" placeholder="______" />
+      </div>
+
+      <div class="space-y-3">
+        <button id="send-otp-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
+          <i class="ph ph-paper-plane-right"></i>
+          <span>إرسال رمز التحقق</span>
+        </button>
+        <button id="verify-btn" class="hidden w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl py-3 transition">
+          <i class="ph ph-shield-check"></i>
+          <span>تأكيد الدخول</span>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 pt-2">
+        <button id="driver-btn" class="inline-flex items-center justify-center gap-2 border border-blue-200 text-blue-600 rounded-2xl py-2 text-sm font-semibold hover:bg-blue-50 transition">
+          <i class="ph ph-steering-wheel"></i>
+          <span>أنا مندوب</span>
+        </button>
+        <button id="admin-btn" class="inline-flex items-center justify-center gap-2 border border-blue-200 text-blue-600 rounded-2xl py-2 text-sm font-semibold hover:bg-blue-50 transition">
+          <i class="ph ph-shield"></i>
+          <span>لوحة المشرف</span>
+        </button>
+      </div>
+
+      <p class="text-center text-xs text-slate-500">يمكنك الوصول مباشرة إلى <a class="text-blue-600 font-semibold" href="/delivery_app.html">واجهة العميل</a> بعد تسجيل الدخول.</p>
+    </section>
+  </main>
+
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+      const ui = window.UI || {};
+
+      const phoneInput = document.getElementById('phone-input');
+      const otpInput = document.getElementById('otp-input');
+      const otpSection = document.getElementById('otp-section');
+      const otpHint = document.getElementById('otp-hint');
+      const sendBtn = document.getElementById('send-otp-btn');
+      const verifyBtn = document.getElementById('verify-btn');
+      const driverBtn = document.getElementById('driver-btn');
+      const adminBtn = document.getElementById('admin-btn');
+
+      function showToast(message, type = 'info') {
+        if (typeof ui.showToast === 'function') {
+          ui.showToast(message, type);
+        } else {
+          alert(message);
+        }
+      }
+
+      function setLoading(button, state, text) {
+        if (typeof ui.setLoading === 'function') {
+          ui.setLoading(button, state, text);
+        } else {
+          button.disabled = state;
+          if (state) {
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = text || '...';
+          } else if (button.dataset.originalText) {
+            button.innerHTML = button.dataset.originalText;
+            delete button.dataset.originalText;
+          }
+        }
+      }
+
+      async function requestOtp() {
+        try {
+          if (!API_BASE_URL) {
+            throw new Error('لم يتم ضبط عنوان الخادم.');
+          }
+          const phone = (phoneInput.value || '').trim();
+          if (!phone) {
+            throw new Error('يرجى إدخال رقم الجوال.');
+          }
+          setLoading(sendBtn, true, 'جارٍ الإرسال...');
+          const response = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || 'تعذر إرسال رمز التحقق.');
+          }
+          otpSection.classList.remove('hidden');
+          otpHint.classList.remove('hidden');
+          verifyBtn.classList.remove('hidden');
+          otpInput.focus();
+          showToast(data.mock ? `رمز تجريبي: ${data.code}` : 'تم إرسال الرمز إلى جوالك.', 'success');
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ غير متوقع.', 'error');
+        } finally {
+          setLoading(sendBtn, false);
+        }
+      }
+
+      async function verifyOtp() {
+        try {
+          if (!API_BASE_URL) {
+            throw new Error('لم يتم ضبط عنوان الخادم.');
+          }
+          const phone = (phoneInput.value || '').trim();
+          const code = (otpInput.value || '').trim();
+          if (!phone || !code) {
+            throw new Error('يرجى إدخال رقم الجوال والرمز.');
+          }
+          setLoading(verifyBtn, true, 'جارٍ التحقق...');
+          const response = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone, code, role: 'customer' })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || 'تعذر التحقق من الرمز.');
+          }
+          if (data?.token) {
+            localStorage.setItem('authToken', data.token);
+            showToast('تم تسجيل الدخول بنجاح.', 'success');
+            setTimeout(() => {
+              window.location.href = '/delivery_app.html';
+            }, 400);
+          } else {
+            throw new Error('استجابة غير متوقعة من الخادم.');
+          }
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ غير متوقع.', 'error');
+        } finally {
+          setLoading(verifyBtn, false);
+        }
+      }
+
+      sendBtn.addEventListener('click', requestOtp);
+      verifyBtn.addEventListener('click', verifyOtp);
+      otpInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          verifyOtp();
+        }
+      });
+
+      driverBtn.addEventListener('click', () => {
+        window.location.href = '/driver_app.html';
+      });
+      adminBtn.addEventListener('click', () => {
+        window.location.href = '/admin_panel.html';
+      });
+
+      if (location.hash.startsWith('#token=')) {
+        const token = decodeURIComponent(location.hash.slice(7));
+        if (token) {
+          localStorage.setItem('authToken', token);
+          window.location.replace('/delivery_app.html');
+        }
+      }
+    });
+  </script>
+</body>
+</html>

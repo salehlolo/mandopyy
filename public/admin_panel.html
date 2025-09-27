@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Waslny – لوحة الإدارة</title>
+  <script src="/config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script defer src="/assets/js/ui.js"></script>
+  <script defer src="/assets/js/map.js"></script>
+  <style>
+    body { font-family: 'Tajawal', 'Inter', sans-serif; background-color: #f1f5f9; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div id="login-view" class="min-h-screen flex items-center justify-center px-4">
+    <div class="bg-white rounded-3xl shadow-xl px-6 py-8 max-w-sm w-full space-y-5">
+      <div class="text-center space-y-2">
+        <div class="inline-flex items-center justify-center gap-2 text-blue-600">
+          <i class="ph ph-shield-star text-3xl"></i>
+          <span class="font-semibold text-sm uppercase tracking-wide">Waslny Admin</span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">تسجيل الدخول للمشرف</h1>
+        <p class="text-sm text-slate-500">أدخل كلمة المرور الإدارية للوصول إلى لوحة التحكم.</p>
+      </div>
+      <div class="space-y-2">
+        <label for="admin-password" class="text-xs font-semibold text-slate-500">كلمة المرور</label>
+        <input id="admin-password" type="password" class="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="********" />
+      </div>
+      <button id="admin-login-btn" class="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl py-3 transition">
+        <i class="ph ph-sign-in"></i>
+        <span>تسجيل الدخول</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="admin-app" class="hidden min-h-screen">
+    <header class="bg-white shadow-sm border-b border-slate-100">
+      <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-400">لوحة متابعة المناديب</p>
+          <h2 class="text-xl font-semibold text-slate-800">إدارة حسابات السائقين</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="refresh-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
+            <i class="ph ph-arrows-clockwise"></i>
+            <span>تحديث البيانات</span>
+          </button>
+          <button id="admin-logout-btn" class="inline-flex items-center gap-2 text-sm font-semibold text-rose-500 hover:text-rose-600 transition">
+            <i class="ph ph-sign-out"></i>
+            <span>خروج</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <section class="grid gap-4 lg:grid-cols-[1fr_360px]">
+        <div class="bg-white rounded-3xl shadow p-6">
+          <div id="admin-map" class="h-[320px] rounded-2xl bg-slate-100"></div>
+          <p id="map-hint" class="mt-3 text-xs text-slate-400">سيتم عرض مواقع المناديب المتاحين باللون الأزرق عند توفر بيانات الموقع.</p>
+        </div>
+        <div class="bg-white rounded-3xl shadow p-6 space-y-4">
+          <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+            <i class="ph ph-faders-horizontal text-blue-600"></i>
+            عوامل التصفية
+          </h3>
+          <div class="space-y-3">
+            <div>
+              <p class="text-xs text-slate-400 mb-2">حالة الاعتماد</p>
+              <div class="flex flex-wrap gap-2">
+                <button data-filter-verified="all" class="filter-verified px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-slate-100 text-slate-600">الكل</button>
+                <button data-filter-verified="true" class="filter-verified px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-emerald-600 hover:bg-emerald-50">معتمد</button>
+                <button data-filter-verified="false" class="filter-verified px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-amber-600 hover:bg-amber-50">بانتظار الاعتماد</button>
+              </div>
+            </div>
+            <div>
+              <p class="text-xs text-slate-400 mb-2">حالة التوفر</p>
+              <div class="flex flex-wrap gap-2">
+                <button data-filter-availability="all" class="filter-availability px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-slate-100 text-slate-600">الكل</button>
+                <button data-filter-availability="online" class="filter-availability px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-emerald-600 hover:bg-emerald-50">متصل</button>
+                <button data-filter-availability="busy" class="filter-availability px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-blue-600 hover:bg-blue-50">مشغول</button>
+                <button data-filter-availability="offline" class="filter-availability px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50">غير متصل</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-white rounded-3xl shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-slate-800">قائمة المناديب</h3>
+          <span id="drivers-count" class="text-xs text-slate-400">0 مندوب</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-100 text-sm text-slate-700">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3 text-right">الاسم</th>
+                <th class="px-4 py-3 text-right">رقم الجوال</th>
+                <th class="px-4 py-3 text-right">المركبة</th>
+                <th class="px-4 py-3 text-right">الحالة</th>
+                <th class="px-4 py-3 text-right">التوفر</th>
+                <th class="px-4 py-3 text-right">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="drivers-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="bg-white rounded-3xl shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-slate-800">الدفعات الإلكترونية</h3>
+          <span id="payments-count" class="text-xs text-slate-400">0 عملية</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-100 text-sm text-slate-700">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3 text-right">الطلب</th>
+                <th class="px-4 py-3 text-right">المبلغ</th>
+                <th class="px-4 py-3 text-right">المزوّد</th>
+                <th class="px-4 py-3 text-right">حالة الدفع</th>
+                <th class="px-4 py-3 text-right">التاريخ</th>
+              </tr>
+            </thead>
+            <tbody id="payments-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+      const loginView = document.getElementById('login-view');
+      const adminApp = document.getElementById('admin-app');
+      const passwordInput = document.getElementById('admin-password');
+      const loginBtn = document.getElementById('admin-login-btn');
+      const logoutBtn = document.getElementById('admin-logout-btn');
+      const refreshBtn = document.getElementById('refresh-btn');
+      const driversBody = document.getElementById('drivers-body');
+      const driversCount = document.getElementById('drivers-count');
+      const mapHint = document.getElementById('map-hint');
+      const paymentsBody = document.getElementById('payments-body');
+      const paymentsCount = document.getElementById('payments-count');
+
+      const verifiedFilters = Array.from(document.querySelectorAll('.filter-verified'));
+      const availabilityFilters = Array.from(document.querySelectorAll('.filter-availability'));
+
+      let adminToken = sessionStorage.getItem('waslny_admin_token') || '';
+      let drivers = [];
+      let payments = [];
+      let filterVerified = 'all';
+      let filterAvailability = 'all';
+      let mapInstance = null;
+      let mapMarkers = [];
+
+      function showToast(message, type = 'error') {
+        window.UI?.showToast(message, type);
+      }
+
+      function setFilterActive(elements, activeValue) {
+        elements.forEach((el) => {
+          const isActive = el.dataset.filterVerified === activeValue || el.dataset.filterAvailability === activeValue;
+          el.classList.toggle('bg-blue-600', isActive);
+          el.classList.toggle('border-blue-600', isActive);
+          el.classList.toggle('text-white', isActive);
+          el.classList.toggle('bg-slate-100', !isActive);
+          el.classList.toggle('border-slate-200', !isActive);
+          el.classList.toggle('text-slate-600', !isActive);
+        });
+      }
+
+      function applyFilters(list) {
+        return list.filter((driver) => {
+          const matchesVerified = filterVerified === 'all' || String(driver.verified) === filterVerified;
+          const matchesAvailability = filterAvailability === 'all' || driver.availabilityStatus === filterAvailability;
+          return matchesVerified && matchesAvailability;
+        });
+      }
+
+      function renderDrivers() {
+        const filtered = applyFilters(drivers);
+        driversBody.innerHTML = '';
+        driversCount.textContent = `${filtered.length} مندوب`;
+        if (!filtered.length) {
+          driversBody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">لا توجد سجلات مطابقة للمرشحات المحددة.</td></tr>';
+          updateMapMarkers(filtered);
+          return;
+        }
+        filtered.forEach((driver) => {
+          const row = document.createElement('tr');
+          row.className = 'hover:bg-slate-50 transition';
+          const statusBadge = driver.verified
+            ? '<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-check-circle"></i>معتمد</span>'
+            : '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-clock"></i>بانتظار الاعتماد</span>';
+          const availabilityBadge = (() => {
+            if (driver.availabilityStatus === 'online') return '<span class="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-sparkle"></i>متصل</span>';
+            if (driver.availabilityStatus === 'busy') return '<span class="inline-flex items-center gap-1 bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-navigation-arrow"></i>في مهمة</span>';
+            return '<span class="inline-flex items-center gap-1 bg-slate-50 text-slate-500 px-3 py-1 rounded-full text-xs"><i class="ph ph-moon"></i>غير متصل</span>';
+          })();
+          row.innerHTML = `
+            <td class="px-4 py-4">${driver.name || '-'}</td>
+            <td class="px-4 py-4">${driver.phoneNumber || '-'}</td>
+            <td class="px-4 py-4">${[driver.vehicleType, driver.licensePlate].filter(Boolean).join(' • ') || '-'}</td>
+            <td class="px-4 py-4">${statusBadge}</td>
+            <td class="px-4 py-4">${availabilityBadge}</td>
+            <td class="px-4 py-4">
+              ${driver.verified
+                ? `<button data-action="unverify" data-id="${driver.id}" class="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">إلغاء الاعتماد</button>`
+                : `<button data-action="verify" data-id="${driver.id}" class="px-3 py-2 rounded-xl text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition">اعتماد الآن</button>`}
+            </td>
+          `;
+          driversBody.appendChild(row);
+        });
+        updateMapMarkers(filtered);
+      }
+
+      function renderPayments() {
+        paymentsBody.innerHTML = '';
+        paymentsCount.textContent = `${payments.length} عملية`;
+        if (!payments.length) {
+          paymentsBody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">لا توجد عمليات دفع مسجلة بعد.</td></tr>';
+          return;
+        }
+        payments.forEach((payment) => {
+          const row = document.createElement('tr');
+          row.className = 'hover:bg-slate-50 transition';
+          const statusKey = String(payment.status || 'pending').toLowerCase();
+          const statusBadge = {
+            paid: '<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-check-circle"></i>مدفوع</span>',
+            failed: '<span class="inline-flex items-center gap-1 bg-rose-100 text-rose-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-x-circle"></i>فشل</span>',
+            pending: '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-600 px-3 py-1 rounded-full text-xs"><i class="ph ph-clock"></i>قيد المعالجة</span>'
+          };
+          row.innerHTML = `
+            <td class="px-4 py-3">#${payment.orderId}</td>
+            <td class="px-4 py-3">${(payment.amount ?? 0).toFixed(2)} ${payment.currency || 'EGP'}</td>
+            <td class="px-4 py-3 uppercase">${payment.provider || '-'}</td>
+            <td class="px-4 py-3">${statusBadge[statusKey] || statusBadge.pending}</td>
+            <td class="px-4 py-3 text-slate-500 text-xs">${new Date(payment.createdAt).toLocaleString('ar-EG')}</td>
+          `;
+          paymentsBody.appendChild(row);
+        });
+      }
+
+      function clearMapMarkers() {
+        if (!mapMarkers.length) return;
+        mapMarkers.forEach((marker) => marker.remove());
+        mapMarkers = [];
+      }
+
+      function updateMapMarkers(list) {
+        if (!mapInstance) return;
+        clearMapMarkers();
+        const withLocations = list.filter((driver) => driver.lastLocation);
+        if (!withLocations.length) {
+          mapHint.textContent = 'لا توجد بيانات مواقع محدثة حاليًا.';
+          return;
+        }
+        mapHint.textContent = 'تم تحديد مواقع المناديب المتاحين على الخريطة.';
+        withLocations.forEach((driver) => {
+          const marker = window.MapKit.addMarker(mapInstance, {
+            lat: driver.lastLocation.lat,
+            lng: driver.lastLocation.lng,
+            label: driver.name || `مندوب ${driver.id}`
+          });
+          marker.bindPopup(`<div class="text-sm text-slate-700"><strong>${driver.name || 'مندوب'}</strong><br/>${driver.vehicleType || ''}</div>`);
+          mapMarkers.push(marker);
+        });
+        window.MapKit.fitBounds(mapInstance, mapMarkers);
+      }
+
+      async function ensureMap() {
+        if (!mapInstance) {
+          mapInstance = await window.MapKit.initMap('admin-map', [24.7136, 46.6753], 10);
+        }
+      }
+
+      async function loadDrivers() {
+        if (!adminToken) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/admin/drivers`, {
+            headers: { Authorization: `Bearer ${adminToken}` }
+          });
+          if (response.status === 401) {
+            performLogout('انتهت صلاحية الجلسة الإدارية.');
+            return;
+          }
+          if (!response.ok) {
+            throw new Error('تعذر تحميل قائمة المناديب.');
+          }
+          drivers = await response.json();
+          await ensureMap();
+          renderDrivers();
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ أثناء تحميل البيانات.');
+        }
+      }
+
+      async function loadPayments() {
+        if (!adminToken) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/admin/payments`, {
+            headers: { Authorization: `Bearer ${adminToken}` }
+          });
+          if (response.status === 401) {
+            performLogout('انتهت صلاحية الجلسة الإدارية.');
+            return;
+          }
+          if (!response.ok) {
+            throw new Error('تعذر تحميل سجل الدفعات.');
+          }
+          payments = await response.json();
+          renderPayments();
+        } catch (error) {
+          showToast(error.message || 'حدث خطأ أثناء تحميل الدفعات.');
+        }
+      }
+
+      async function updateDriverVerification(driverId, verified) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${driverId}/verify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${adminToken}`
+            },
+            body: JSON.stringify({ verified })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || data?.error || 'تعذر تحديث حالة السائق.');
+          }
+          showToast(verified ? 'تم اعتماد السائق بنجاح.' : 'تم إلغاء اعتماد السائق.', verified ? 'success' : 'info');
+          await loadDrivers();
+        } catch (error) {
+          showToast(error.message || 'فشل تحديث حالة السائق.');
+        }
+      }
+
+      function performLogout(message) {
+        adminToken = '';
+        sessionStorage.removeItem('waslny_admin_token');
+        adminApp.classList.add('hidden');
+        loginView.classList.remove('hidden');
+        drivers = [];
+        payments = [];
+        renderDrivers();
+        renderPayments();
+        if (message) {
+          showToast(message, 'warning');
+        }
+      }
+
+      async function login() {
+        const password = passwordInput.value.trim();
+        if (!password) {
+          showToast('الرجاء إدخال كلمة المرور.', 'error');
+          return;
+        }
+        try {
+          window.UI?.setLoading(loginBtn, true, 'جارٍ التحقق...');
+          const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || data?.error || 'كلمة مرور غير صحيحة.');
+          }
+          adminToken = data.token;
+          sessionStorage.setItem('waslny_admin_token', adminToken);
+          passwordInput.value = '';
+          loginView.classList.add('hidden');
+          adminApp.classList.remove('hidden');
+          showToast('تم تسجيل الدخول بنجاح.', 'success');
+          setFilterActive(verifiedFilters, filterVerified);
+          setFilterActive(availabilityFilters, filterAvailability);
+          await ensureMap();
+          await loadDrivers();
+          await loadPayments();
+        } catch (error) {
+          showToast(error.message || 'فشل تسجيل الدخول.');
+        } finally {
+          window.UI?.setLoading(loginBtn, false, 'تسجيل الدخول');
+        }
+      }
+
+      loginBtn.addEventListener('click', login);
+      passwordInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          login();
+        }
+      });
+
+      logoutBtn.addEventListener('click', () => {
+        performLogout('تم تسجيل الخروج.');
+      });
+
+      refreshBtn.addEventListener('click', () => {
+        loadDrivers();
+        loadPayments();
+      });
+
+      driversBody.addEventListener('click', (event) => {
+        const target = event.target.closest('button[data-action]');
+        if (!target) return;
+        const driverId = Number(target.dataset.id);
+        const action = target.dataset.action;
+        if (Number.isNaN(driverId)) return;
+        if (action === 'verify') {
+          updateDriverVerification(driverId, true);
+        } else if (action === 'unverify') {
+          window.UI?.showModal({
+            title: 'إلغاء اعتماد السائق',
+            message: 'هل أنت متأكد من إلغاء اعتماد هذا السائق؟ سيتم إيقافه عن استقبال الطلبات.',
+            confirmText: 'إلغاء الاعتماد',
+            cancelText: 'تراجع',
+            onConfirm: () => updateDriverVerification(driverId, false)
+          });
+        }
+      });
+
+      verifiedFilters.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          filterVerified = btn.dataset.filterVerified;
+          setFilterActive(verifiedFilters, filterVerified);
+          renderDrivers();
+        });
+      });
+
+      availabilityFilters.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          filterAvailability = btn.dataset.filterAvailability;
+          setFilterActive(availabilityFilters, filterAvailability);
+          renderDrivers();
+        });
+      });
+
+      if (adminToken) {
+        loginView.classList.add('hidden');
+        adminApp.classList.remove('hidden');
+        setFilterActive(verifiedFilters, filterVerified);
+        setFilterActive(availabilityFilters, filterAvailability);
+        await ensureMap();
+        await loadDrivers();
+        await loadPayments();
+      } else {
+        setFilterActive(verifiedFilters, 'all');
+        setFilterActive(availabilityFilters, 'all');
+      }
+    });
+  </script>
+  <script src="/assets/js/topbar.js" defer></script>
+</body>
+</html>
