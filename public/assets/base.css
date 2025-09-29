@@ -1,0 +1,14 @@
+:root{
+  --brand:#0F73FF;
+  --brand-600:#0d63dd;
+  --surface:#ffffff;
+  --border:#e5e7eb;
+  --text:#0f172a;
+  font-family:"Tajawal",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+body{margin:0;background:#f3f5f9;color:var(--text);font-family:"Tajawal",system-ui,-apple-system,"Segoe UI",sans-serif;}
+label{font-size:14px;color:#374151;display:block;margin-bottom:6px;font-weight:600;}
+.input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #d1d5db;font-size:15px;box-sizing:border-box;}
+.input:focus{outline:2px solid rgba(15,115,255,0.25);outline-offset:1px;}
+a{color:var(--brand);}
+.btn{cursor:pointer;transition:background .2s ease, color .2s ease;}

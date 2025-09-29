@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MANDUBO – الملف الشخصي</title>
+<link rel="stylesheet" href="/assets/base.css"/>
+<style>
+:root{
+  --brand:#0F73FF; --bg:#F8FAFC; --card:#FFFFFF; --border:#E5E7EB; --text:#111827; --muted:#6B7280;
+  --radius:16px; --pad:14px; --gap:12px; --shadow:0 10px 24px rgba(0,0,0,.04);
+}
+*{box-sizing:border-box}
+body{background:var(--bg); color:var(--text); font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
+h1,h2,h3{margin:0 0 10px}
+.page{max-width:920px; margin:24px auto; padding:0 12px}
+.card{
+  background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:18px; margin-bottom:16px;
+}
+.section-title{font-weight:800; font-size:18px; margin-bottom:10px}
+.form-grid{display:grid; grid-template-columns:1fr; gap:var(--gap)}
+@media (min-width: 780px){ .form-grid{ grid-template-columns:1fr 1fr; } }
+.label{font-size:13px; color:var(--muted); margin:2px 0 6px}
+.input, .select{
+  width:100%; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:16px; background:#fff;
+}
+.row-span-2{grid-column:1/-1}
+.actions{display:flex; gap:10px; justify-content:flex-end; margin-top:10px}
+.btn{border:1px solid var(--border); background:#fff; color:#111; padding:10px 14px; border-radius:12px; cursor:pointer}
+.btn-brand{border-color:var(--brand); background:var(--brand); color:#fff}
+.btn:active{transform:scale(.98)}
+.hr{height:1px; background:var(--border); margin:16px 0}
+.pw-wrap{position:relative}
+.eye{
+  position:absolute; inset-inline-end:10px; top:50%; transform:translateY(-50%);
+  border:0; background:none; color:var(--muted); cursor:pointer; font-size:13px;
+}
+.meter{height:8px; background:#e5e7eb; border-radius:999px; overflow:hidden}
+.meter>div{height:100%; width:0; background:#ef4444; transition:width .25s, background .25s}
+.notice{font-size:12px; color:var(--muted); margin-top:6px}
+.header-brand{color:var(--brand); text-align:center; font-weight:900; margin:16px 0}
+</style>
+<script src="/config.js"></script>
+<script src="/assets/js/i18n.js"></script>
+<script>i18n.init();</script>
+<script src="/assets/js/topbar.js" defer></script>
+</head>
+<body>
+<h2 class="header-brand">MANDUBO</h2>
+
+<main class="page">
+
+  <!-- بطاقة البيانات الأساسية -->
+  <section class="card">
+    <h3 class="section-title" data-i18n="profile_title">الملف الشخصي</h3>
+    <div class="form-grid">
+      <div>
+        <div class="label">الاسم الأول</div>
+        <input id="fn" class="input" placeholder="مثال: أحمد"/>
+      </div>
+
+      <div>
+        <div class="label">اسم العائلة</div>
+        <input id="ln" class="input" placeholder="مثال: السيد"/>
+      </div>
+
+      <div class="row-span-2">
+        <div class="label">رقم الهاتف (مقيد)</div>
+        <input id="ph" class="input" disabled/>
+      </div>
+
+      <div>
+        <div class="label">تاريخ الميلاد</div>
+        <input id="dob" type="date" class="input"/>
+      </div>
+
+      <div>
+        <div class="label">النوع</div>
+        <select id="gender" class="select">
+          <option value="">غير محدد</option>
+          <option value="male">ذكر</option>
+          <option value="female">أنثى</option>
+          <option value="other">آخر</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a href="/delivery_app.html" class="btn" data-i18n="cancel">رجوع</a>
+      <button id="saveProfile" class="btn btn-brand" data-i18n="save">حفظ</button>
+    </div>
+  </section>
+
+  <!-- فاصل -->
+  <div class="hr"></div>
+
+  <!-- بطاقة تغيير كلمة المرور -->
+  <section class="card" style="max-width:640px">
+    <h3 class="section-title" data-i18n="pass_section">تغيير كلمة المرور</h3>
+
+    <div class="form-grid">
+      <div class="row-span-2">
+        <div class="label" data-i18n="current_password">كلمة المرور الحالية</div>
+        <div class="pw-wrap">
+          <input id="oldp" type="password" class="input" autocomplete="current-password"/>
+          <button class="eye" type="button" onclick="togglePw('oldp')">إظهار</button>
+        </div>
+      </div>
+
+      <div class="row-span-2">
+        <div class="label" data-i18n="new_password">كلمة مرور جديدة</div>
+        <div class="pw-wrap">
+          <input id="newp" type="password" class="input" autocomplete="new-password"/>
+          <button class="eye" type="button" onclick="togglePw('newp')">إظهار</button>
+        </div>
+        <div class="meter" aria-hidden="true" style="margin-top:8px"><div id="mbar2"></div></div>
+        <div class="notice" id="mtext2" data-i18n="password_strength">قوة كلمة المرور</div>
+      </div>
+
+      <div class="row-span-2">
+        <div class="label" data-i18n="confirm_password">تأكيد كلمة المرور</div>
+        <div class="pw-wrap">
+          <input id="newp2" type="password" class="input" autocomplete="new-password"/>
+          <button class="eye" type="button" onclick="togglePw('newp2')">إظهار</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="savePass" class="btn btn-brand" style="width:100%" data-i18n="change_password">تغيير كلمة المرور</button>
+    </div>
+  </section>
+
+</main>
+
+<script>
+function togglePw(id){ const el=document.getElementById(id); if(!el) return; el.type = (el.type==='password'?'text':'password'); }
+function score(s){ let n=0; if(s.length>=8) n++; if(/[A-Z]/.test(s)) n++; if(/[a-z]/.test(s)) n++; if(/\d/.test(s)) n++; if(/[^\w\s]/.test(s)) n++; return Math.min(n,5); }
+newp?.addEventListener('input', ()=>{
+  const sc=score(newp.value); mbar2.style.width=(sc*20)+'%';
+  mbar2.style.background=['#ef4444','#f59e0b','#f59e0b','#10b981','#10b981'][sc-1] || '#ef4444';
+  const labels = {
+    ar: ['ضعيفة','ضعيفة','متوسطة','قوية','قوية'],
+    en: ['Weak','Weak','Medium','Strong','Strong']
+  };
+  const lang = (window.i18n?.get && window.i18n.get()) || 'ar';
+  const list = labels[lang] || labels.ar;
+  const idx = Math.max(0, Math.min(sc-1, list.length-1));
+  mtext2.textContent = list[idx];
+});
+</script>
+<script src="/assets/js/lang-boot.js" defer></script>
+<script>
+const { API_BASE_URL } = window.__APP_CONFIG__||{};
+const token = localStorage.getItem('authToken');
+if(!token){ location.href='/index.html'; }
+i18n.apply();
+
+(async ()=>{
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/me`,{ headers:{ Authorization:`Bearer ${token}` }});
+    if(!r.ok){ throw new Error('فشل تحميل الملف الشخصي'); }
+    const d = await r.json();
+    document.getElementById('fn').value = d.first_name || '';
+    document.getElementById('ln').value = d.last_name || '';
+    document.getElementById('ph').value = d.phone || '';
+    document.getElementById('dob').value = d.dob || '';
+    document.getElementById('gender').value = d.gender || '';
+  }catch(err){
+    alert(err.message||'تعذر تحميل الملف الشخصي');
+  }
+})();
+
+document.getElementById('saveProfile').onclick = async ()=>{
+  const body = {
+    first_name: document.getElementById('fn').value.trim(),
+    last_name: document.getElementById('ln').value.trim(),
+    dob: document.getElementById('dob').value || null,
+    gender: document.getElementById('gender').value || null
+  };
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/me`,{
+      method:'PATCH',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d?.message||'فشل الحفظ'); }
+    alert('تم حفظ الملف الشخصي');
+  }catch(err){
+    alert(err.message||'لم يتم الحفظ');
+  }
+};
+
+newp.oninput();
+
+document.getElementById('savePass').onclick = async ()=>{
+  const current = document.getElementById('oldp').value;
+  const next = document.getElementById('newp').value;
+  const confirm = document.getElementById('newp2').value;
+  if(next.length<6 || next!==confirm){ return alert('تحقق من كلمة المرور الجديدة'); }
+  try{
+    const r = await fetch(`${API_BASE_URL}/v1/auth/password/change`,{
+      method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+      body: JSON.stringify({ old_password: current, new_password: next })
+    });
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d?.message||'فشل تغيير كلمة المرور'); }
+    document.getElementById('oldp').value='';
+    document.getElementById('newp').value='';
+    document.getElementById('newp2').value='';
+    alert('تم تغيير كلمة المرور');
+  }catch(err){
+    alert(err.message||'لم يتم تغيير كلمة المرور');
+  }
+};
+</script>
+</body>
+</html>

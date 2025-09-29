@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MANDUBO – تطبيق السائق</title>
+    <script src="/config.js"></script>
+    <script>window.__APP_NAME__ = 'MANDUBO';</script>
+    <script src="/assets/js/i18n.js"></script>
+    <script>i18n.init();i18n.apply();</script>
+  <style>
+    .dev-menu{position:fixed;right:12px;bottom:12px;z-index:99999;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font:14px system-ui;opacity:.75}
+    .dev-menu:hover{opacity:1}
+    .dev-menu a{color:#9ad;margin:0 6px;text-decoration:none}
+    .dev-menu .btn{border:1px solid #444;background:#222;color:#fff;padding:4px 8px;border-radius:8px;cursor:pointer}
+  </style>
+  <div class="dev-menu" id="devMenu" style="display:none">
+    <b>Dev</b> · <a href="/index.html">Home</a> | <a href="/delivery_app.html">Customer</a> | <a href="/driver_app.html">Driver</a> | <a href="/admin_panel.html">Admin</a> | <a href="/orders_history.html">History</a>
+    · <button class="btn" id="mockLogin">Mock Login</button>
+    <button class="btn" id="logout">Logout</button>
+  </div>
+  <script>
+    (function(){
+      if((window.__APP_CONFIG__||{}).NODE_ENV !== 'production'){
+        const dm=document.getElementById('devMenu');
+        if(dm) dm.style.display='block';
+        document.getElementById('mockLogin')?.addEventListener('click',()=>{localStorage.setItem('authToken','dev-token');alert('Mock token set');});
+        document.getElementById('logout')?.addEventListener('click',()=>{localStorage.removeItem('authToken');alert('Token removed');});
+      }
+    })();
+  </script>
+  <script>
+        const { API_BASE_URL } = window.__APP_CONFIG__ || {};
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script defer src="/assets/js/ui.js"></script>
+    <style>
+        :root{ --brand:#0F73FF; --brand-600:#0d63dd; }
+        .brand{ color: var(--brand); }
+        .btn-brand{background:var(--brand);border-color:var(--brand);color:#fff}
+        .btn-brand:hover{background:var(--brand-600)}
+        html, body {
+            font-family: 'Tajawal', 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
+        .toggle {
+            width: 52px;
+            height: 28px;
+        }
+        .toggle input { display: none; }
+        .toggle .slider {
+            background-color: #cbd5f5;
+            border-radius: 9999px;
+            position: relative;
+            transition: background-color 0.3s ease;
+        }
+        .toggle .slider::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 9999px;
+            background-color: #fff;
+            top: 2px;
+            right: 2px;
+            transition: transform 0.3s ease;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+        }
+        .toggle input:checked + .slider {
+            background-color: #2563eb;
+        }
+        .toggle input:checked + .slider::after {
+            transform: translateX(-24px);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <h2 class="brand" style="text-align:center;margin:10px 0">MANDUBO</h2>
+    <!-- Authentication -->
+    <div id="auth-container" class="h-screen w-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-sm bg-white rounded-3xl shadow-xl p-8 space-y-6">
+            <div class="text-center space-y-2">
+                <div class="flex items-center justify-center gap-2 text-blue-600">
+                    <i class="ph ph-steering-wheel text-3xl"></i>
+                    <h1 class="text-3xl font-bold">MANDUBO للسائقين</h1>
+                </div>
+                <p class="text-sm text-slate-500">سجّل الدخول برقم جوالك لتتبع الطلبات واستلام المهام.</p>
+            </div>
+            <div id="auth-alert" class="hidden text-sm text-red-600 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-center"></div>
+            <div class="space-y-2">
+                <label class="text-sm text-slate-600">رقم الجوال</label>
+                <input id="auth-phone" type="tel" placeholder="مثال: 01012345678" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" autocomplete="tel" />
+                <p id="auth-otp-hint" class="hidden text-xs text-slate-500">أدخل الرمز المرسل إليك خلال 5 دقائق.</p>
+            </div>
+            <div id="auth-otp-group" class="space-y-2 hidden">
+                <label class="text-sm text-slate-600">رمز التحقق</label>
+                <input id="auth-otp" type="text" inputmode="numeric" maxlength="6" placeholder="____" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 tracking-widest text-center" />
+            </div>
+            <div class="space-y-3">
+                <button id="auth-send-otp" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition inline-flex items-center justify-center gap-2">
+                    <i class="ph ph-paper-plane-right"></i>
+                    <span>إرسال رمز التحقق</span>
+                </button>
+                <button id="auth-verify" class="hidden w-full bg-emerald-600 text-white font-semibold py-3 rounded-xl hover:bg-emerald-700 transition inline-flex items-center justify-center gap-2">
+                    <i class="ph ph-shield-check"></i>
+                    <span>تأكيد الدخول</span>
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 text-center">يمكنك العودة إلى صفحة <a href="/index.html" class="text-blue-600 font-semibold">تسجيل العملاء</a> من هنا.</p>
+        </div>
+    </div>
+
+    <!-- App -->
+    <div id="app-container" class="hidden min-h-screen bg-slate-100">
+        <header class="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-500">مرحباً، <span id="driver-name-header" class="font-semibold text-slate-700">سائق</span></p>
+                <p class="text-sm text-slate-400">تأكد من تحديث حالتك لتلقي الطلبات الجديدة</p>
+            </div>
+            <button id="logout-btn" class="flex items-center gap-2 text-sm text-red-500 hover:text-red-600">
+                <i class="ph ph-sign-out"></i>
+                <span>تسجيل الخروج</span>
+            </button>
+        </header>
+
+        <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+            <section id="registration-view" class="hidden bg-white rounded-3xl shadow p-6 space-y-4">
+                <h2 class="text-xl font-semibold text-slate-800 flex items-center gap-2"><i class="ph ph-identification-card text-blue-600"></i>تسجيل كسائق</h2>
+                <p class="text-sm text-slate-500">أدخل بياناتك بدقة ليتمكن فريق الدعم من مراجعتها والموافقة عليها.</p>
+                <form id="registration-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">الاسم الكامل</label>
+                        <input id="reg-name" type="text" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">رقم الجوال للتواصل</label>
+                        <input id="reg-phone" type="tel" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="05XXXXXXXX" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">نوع المركبة</label>
+                        <select id="reg-vehicle" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                            <option value="">اختر نوع المركبة</option>
+                            <option value="سيارة">سيارة</option>
+                            <option value="دراجة نارية">دراجة نارية</option>
+                            <option value="شاحنة خفيفة">شاحنة خفيفة</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-slate-600 mb-1">رقم اللوحة</label>
+                        <input id="reg-plate" type="text" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="مثال: أ ب ج 1234" required>
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-semibold py-3 rounded-2xl hover:bg-blue-700 transition">إرسال الطلب للمراجعة</button>
+                </form>
+            </section>
+
+            <section id="pending-view" class="hidden bg-white rounded-3xl shadow p-6 space-y-4 text-center">
+                <i class="ph ph-hourglass-medium text-4xl text-blue-500 mx-auto"></i>
+                <h2 class="text-xl font-semibold text-slate-800">طلبك قيد المراجعة</h2>
+                <p class="text-sm text-slate-500">سيتم إشعارك فور اعتماد حسابك من قبل الإدارة. نشكرك على صبرك.</p>
+                <button id="refresh-status-btn" class="mx-auto inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"><i class="ph ph-arrow-clockwise"></i>تحديث الحالة</button>
+            </section>
+
+            <section id="dashboard-view" class="hidden space-y-6">
+                <div class="bg-white rounded-3xl shadow p-6 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-xs text-slate-500">الحالة الحالية</p>
+                            <p id="availability-text" class="text-lg font-semibold text-slate-800">غير متصل</p>
+                        </div>
+                        <label class="toggle inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="availability-toggle">
+                            <span class="slider block toggle"></span>
+                        </label>
+                    </div>
+                    <p id="location-status" class="text-xs text-slate-400">الموقع غير مفعّل</p>
+                </div>
+
+                <div id="no-order-card" class="bg-white rounded-3xl shadow p-6 text-center space-y-3">
+                    <i class="ph ph-map-trifold text-4xl text-slate-300 mx-auto"></i>
+                    <h3 class="text-lg font-semibold text-slate-700">لا توجد طلبات نشطة</h3>
+                    <p class="text-sm text-slate-500">عندما تكون متاحاً، سيتم توجيه أقرب طلب مناسب إليك فوراً.</p>
+                </div>
+
+                <div id="active-order-card" class="hidden bg-white rounded-3xl shadow p-6 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2"><i class="ph ph-navigation-arrow text-blue-600"></i>طلب نشط</h3>
+                        <span id="order-status-chip" class="text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-full">جديد</span>
+                    </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
+                    <div class="bg-slate-100 rounded-2xl p-3">
+                        <p class="text-xs text-slate-500 mb-1">نقطة الاستلام</p>
+                        <p id="order-pickup" class="font-semibold text-slate-800">-</p>
+                    </div>
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                            <p class="text-xs text-slate-500 mb-1">نقطة التسليم</p>
+                            <p id="order-dropoff" class="font-semibold text-slate-800">-</p>
+                        </div>
+                        <div class="bg-slate-100 rounded-2xl p-3">
+                        <p class="text-xs text-slate-500 mb-1">بيانات العميل</p>
+                        <p id="order-customer" class="font-semibold text-slate-800">-</p>
+                    </div>
+                    <div class="bg-slate-100 rounded-2xl p-3">
+                        <p class="text-xs text-slate-500 mb-1">التسعيرة</p>
+                        <p id="order-price" class="font-semibold text-slate-800">-</p>
+                        <p id="order-payment-method" class="text-xs text-slate-500 mt-1">-</p>
+                        <p id="order-payment-status" class="text-xs text-slate-500 mt-1">-</p>
+                    </div>
+                </div>
+                    <div class="flex flex-col md:flex-row gap-3">
+                        <button id="mark-picked-btn" class="flex-1 bg-amber-500 text-white font-semibold py-3 rounded-2xl hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم الاستلام</button>
+                        <button id="mark-delivered-btn" class="flex-1 bg-emerald-500 text-white font-semibold py-3 rounded-2xl hover:bg-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed">تم التسليم</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const APP_NAME = window.__APP_NAME__ || 'MANDUBO';
+        const authContainer = document.getElementById('auth-container');
+        const appContainer = document.getElementById('app-container');
+        const authAlert = document.getElementById('auth-alert');
+        const authPhoneInput = document.getElementById('auth-phone');
+        const authOtpGroup = document.getElementById('auth-otp-group');
+        const authOtpInput = document.getElementById('auth-otp');
+        const authOtpHint = document.getElementById('auth-otp-hint');
+        const authSendOtpBtn = document.getElementById('auth-send-otp');
+        const authVerifyBtn = document.getElementById('auth-verify');
+
+        const driverNameHeader = document.getElementById('driver-name-header');
+        const logoutBtn = document.getElementById('logout-btn');
+        const registrationView = document.getElementById('registration-view');
+        const pendingView = document.getElementById('pending-view');
+        const dashboardView = document.getElementById('dashboard-view');
+        const registrationForm = document.getElementById('registration-form');
+        const regName = document.getElementById('reg-name');
+        const regPhone = document.getElementById('reg-phone');
+        const regVehicle = document.getElementById('reg-vehicle');
+        const regPlate = document.getElementById('reg-plate');
+        const refreshStatusBtn = document.getElementById('refresh-status-btn');
+
+        const availabilityToggle = document.getElementById('availability-toggle');
+        const availabilityText = document.getElementById('availability-text');
+        const locationStatus = document.getElementById('location-status');
+        const noOrderCard = document.getElementById('no-order-card');
+        const activeOrderCard = document.getElementById('active-order-card');
+        const orderStatusChip = document.getElementById('order-status-chip');
+        const orderPickupEl = document.getElementById('order-pickup');
+        const orderDropoffEl = document.getElementById('order-dropoff');
+        const orderCustomerEl = document.getElementById('order-customer');
+        const orderPriceEl = document.getElementById('order-price');
+        const orderPaymentMethodEl = document.getElementById('order-payment-method');
+        const orderPaymentStatusEl = document.getElementById('order-payment-status');
+        const markPickedBtn = document.getElementById('mark-picked-btn');
+        const markDeliveredBtn = document.getElementById('mark-delivered-btn');
+
+        const DRIVER_TOKEN_KEY = 'driverAuthToken';
+        let authToken = localStorage.getItem(DRIVER_TOKEN_KEY) || '';
+        let socket = null;
+        let driverProfile = null;
+        let activeOrder = null;
+        let locationWatchId = null;
+        let lastLocation = null;
+
+        function showToast(message, isError = true) {
+            window.UI?.showToast(message, isError ? 'error' : 'success');
+        }
+
+        function setAuthAlert(message, type = 'error') {
+            if (!authAlert) return;
+            if (!message) {
+                authAlert.classList.add('hidden');
+                authAlert.textContent = '';
+                return;
+            }
+            authAlert.textContent = message;
+            authAlert.className = `text-sm px-4 py-3 text-center rounded-2xl ${type === 'success' ? 'text-emerald-600 bg-emerald-50 border border-emerald-100' : 'text-red-600 bg-red-50 border border-red-100'}`;
+            authAlert.classList.remove('hidden');
+        }
+
+        function setAuthToken(token) {
+            authToken = token || '';
+            if (authToken) {
+                localStorage.setItem(DRIVER_TOKEN_KEY, authToken);
+            } else {
+                localStorage.removeItem(DRIVER_TOKEN_KEY);
+            }
+        }
+
+        function showAuthScreen(message) {
+            stopLocationTracking();
+            appContainer.classList.add('hidden');
+            authContainer.classList.remove('hidden');
+            authPhoneInput.value = '';
+            authOtpInput.value = '';
+            authOtpGroup.classList.add('hidden');
+            authOtpHint.classList.add('hidden');
+            authVerifyBtn.classList.add('hidden');
+            if (message) {
+                setAuthAlert(message);
+            } else {
+                setAuthAlert('');
+            }
+        }
+
+        async function enterApp() {
+            authContainer.classList.add('hidden');
+            appContainer.classList.remove('hidden');
+            setupSocket();
+            await fetchProfile();
+        }
+
+        function forceLogout(message) {
+            setAuthToken('');
+            driverProfile = null;
+            activeOrder = null;
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            showAuthScreen(message || 'انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+        }
+
+        function showView(view) {
+            registrationView.classList.add('hidden');
+            pendingView.classList.add('hidden');
+            dashboardView.classList.add('hidden');
+            if (view === 'registration') registrationView.classList.remove('hidden');
+            if (view === 'pending') pendingView.classList.remove('hidden');
+            if (view === 'dashboard') dashboardView.classList.remove('hidden');
+        }
+
+        function updateAvailabilityUI(status) {
+            availabilityText.textContent = status === 'online' ? 'متصل ويستقبل طلبات' : status === 'busy' ? 'في مهمة حالية' : 'غير متصل';
+            availabilityToggle.checked = status === 'online' || status === 'busy';
+            availabilityToggle.disabled = status === 'busy';
+            if (status === 'busy') {
+                locationStatus.textContent = 'يتم تتبع موقعك أثناء تنفيذ الطلب.';
+            } else if (status === 'online') {
+                locationStatus.textContent = 'جاهز لاستقبال الطلبات - يتم تتبع موقعك.';
+            } else {
+                locationStatus.textContent = 'قم بتفعيل حالتك للبدء في استقبال الطلبات.';
+            }
+        }
+
+        function updateActiveOrderCard(order) {
+            if (!order) {
+                activeOrderCard.classList.add('hidden');
+                noOrderCard.classList.remove('hidden');
+                markPickedBtn.disabled = true;
+                markDeliveredBtn.disabled = true;
+                delete markPickedBtn.dataset.nextStatus;
+                markPickedBtn.textContent = 'تم الاستلام';
+                orderPriceEl.textContent = '-';
+                orderPaymentMethodEl.textContent = '-';
+                orderPaymentStatusEl.textContent = '-';
+                orderPaymentStatusEl.className = 'text-xs text-slate-500 mt-1';
+                return;
+            }
+            activeOrderCard.classList.remove('hidden');
+            noOrderCard.classList.add('hidden');
+            const statusLabels = {
+                DRIVER_ASSIGNED: 'في الطريق للاستلام',
+                DRIVER_ARRIVED_PICKUP: 'وصلت لنقطة الاستلام',
+                PICKED_UP: 'تم استلام الطلب',
+                IN_TRANSIT: 'في الطريق للتسليم',
+                ARRIVED_DROPOFF: 'وصلت لنقطة التسليم',
+                DELIVERED: 'مكتمل'
+            };
+            orderStatusChip.textContent = statusLabels[order.status] || order.status;
+            orderStatusChip.className = 'text-xs px-3 py-1 rounded-full ' + (order.status === 'DELIVERED' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600');
+            orderPickupEl.textContent = `(${order.pickup.lat.toFixed(4)}, ${order.pickup.lng.toFixed(4)})`;
+            orderDropoffEl.textContent = `(${order.dropoff.lat.toFixed(4)}, ${order.dropoff.lng.toFixed(4)})`;
+            orderCustomerEl.textContent = `${order.customer?.phoneNumber || '-'} ${order.customer?.name ? ' - ' + order.customer.name : ''}`;
+            const orderAmount =
+                order.priceTotal != null ? Number(order.priceTotal) : order.price != null ? Number(order.price) : null;
+            orderPriceEl.textContent = orderAmount != null ? `${orderAmount.toFixed(2)} ر.س` : '-';
+            if (order.paymentMethod === 'card') {
+                const paymentMap = {
+                    paid: { text: 'مدفوع إلكترونيًا', className: 'text-emerald-600' },
+                    failed: { text: 'فشل الدفع', className: 'text-rose-600' },
+                    pending: { text: 'قيد المعالجة', className: 'text-amber-600' }
+                };
+                const paymentKey = String(order.paymentStatus || 'pending').toLowerCase();
+                const paymentInfo = paymentMap[paymentKey] || paymentMap.pending;
+                orderPaymentMethodEl.textContent = 'بطاقة (Paymob)';
+                orderPaymentStatusEl.textContent = paymentInfo.text;
+                orderPaymentStatusEl.className = `text-xs ${paymentInfo.className} mt-1`;
+            } else {
+                orderPaymentMethodEl.textContent = 'دفع نقدي عند التسليم';
+                orderPaymentStatusEl.textContent = 'يُسلَّم المبلغ عند اكتمال الطلب';
+                orderPaymentStatusEl.className = 'text-xs text-slate-500 mt-1';
+            }
+            const progressConfig = {
+                DRIVER_ASSIGNED: { label: 'وصلت لنقطة الاستلام', status: 'DRIVER_ARRIVED_PICKUP' },
+                DRIVER_ARRIVED_PICKUP: { label: 'تم استلام الطلب', status: 'PICKED_UP' },
+                PICKED_UP: { label: 'بدء التوصيل', status: 'IN_TRANSIT' },
+                IN_TRANSIT: { label: 'وصلت لنقطة التسليم', status: 'ARRIVED_DROPOFF' }
+            };
+            const nextProgress = progressConfig[order.status];
+            if (nextProgress) {
+                markPickedBtn.disabled = false;
+                markPickedBtn.textContent = nextProgress.label;
+                markPickedBtn.dataset.nextStatus = nextProgress.status;
+            } else {
+                markPickedBtn.disabled = true;
+                markPickedBtn.textContent = 'تم الاستلام';
+                delete markPickedBtn.dataset.nextStatus;
+            }
+            markDeliveredBtn.disabled = order.status !== 'ARRIVED_DROPOFF';
+        }
+
+        function clearActiveOrder() {
+            activeOrder = null;
+            updateActiveOrderCard(null);
+        }
+
+        function startLocationTracking() {
+            if (!navigator.geolocation) {
+                locationStatus.textContent = 'الموقع غير مدعوم على جهازك.';
+                return;
+            }
+            if (locationWatchId !== null) return;
+            locationStatus.textContent = 'جارٍ تتبع موقعك...';
+            locationWatchId = navigator.geolocation.watchPosition((pos) => {
+                lastLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                locationStatus.textContent = `آخر تحديث: ${new Date().toLocaleTimeString()}`;
+                if (socket) {
+                    socket.emit('driver:send_location', lastLocation);
+                }
+            }, (err) => {
+                locationStatus.textContent = `تعذر تحديد موقعك: ${err.message}`;
+            }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+        }
+
+        function stopLocationTracking() {
+            if (locationWatchId !== null) {
+                navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
+            }
+            locationStatus.textContent = 'قم بتفعيل حالتك للبدء في استقبال الطلبات.';
+        }
+
+        async function fetchProfile() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/me`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error('تعذر تحميل بيانات الحساب.');
+                }
+                const data = await response.json();
+                driverProfile = data;
+                driverNameHeader.textContent = data.user.name || 'سائق';
+                if (!data.driver) {
+                    showView('registration');
+                    updateAvailabilityUI('offline');
+                    stopLocationTracking();
+                } else if (!data.driver.verified) {
+                    showView('pending');
+                    updateAvailabilityUI('offline');
+                    stopLocationTracking();
+                } else {
+                    showView('dashboard');
+                    updateAvailabilityUI(data.driver.availabilityStatus || 'offline');
+                    if (data.driver.availabilityStatus === 'online' || data.driver.availabilityStatus === 'busy') {
+                        startLocationTracking();
+                    } else {
+                        stopLocationTracking();
+                    }
+                    await fetchActiveDriverOrder();
+                }
+            } catch (error) {
+                showToast(error.message || 'حدث خلل أثناء تحميل البيانات.');
+            }
+        }
+
+        async function fetchActiveDriverOrder() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/active-order`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data && data.id) {
+                    activeOrder = data;
+                    updateActiveOrderCard(data);
+                    if (socket) {
+                        socket.emit('order:join', { orderId: data.id });
+                    }
+                    updateAvailabilityUI('busy');
+                    startLocationTracking();
+                } else {
+                    clearActiveOrder();
+                }
+            } catch (error) {
+                console.error('Failed to fetch active order', error.message);
+            }
+        }
+
+        async function updateAvailability(status) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/status`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ status })
+                });
+                const data = await response.json();
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر تحديث الحالة.');
+                }
+                updateAvailabilityUI(status);
+                if (status === 'online') {
+                    startLocationTracking();
+                } else {
+                    stopLocationTracking();
+                }
+            } catch (error) {
+                showToast(error.message || 'تعذر تحديث الحالة.');
+                availabilityToggle.checked = !availabilityToggle.checked;
+            }
+        }
+
+        function setupSocket() {
+            if (socket) {
+                socket.disconnect();
+            }
+            socket = io(API_BASE_URL, { auth: { token: authToken } });
+            socket.on('connect_error', (error) => {
+                if (error?.message === 'Unauthorized') {
+                    forceLogout('يرجى تسجيل الدخول من جديد.');
+                } else {
+                    showToast('فقد الاتصال بالخادم.');
+                }
+            });
+            socket.on('order:offer', (order) => {
+                if (!order) return;
+                activeOrder = order;
+                socket.emit('order:join', { orderId: order.id });
+                updateActiveOrderCard(order);
+                updateAvailabilityUI('busy');
+                startLocationTracking();
+            });
+            socket.on('order:status', (order) => {
+                if (!order || (activeOrder && order.id !== activeOrder.id)) return;
+                activeOrder = order;
+                updateActiveOrderCard(order);
+                if (order.status === 'DELIVERED') {
+                    showToast('تم إنهاء الطلب بنجاح!', false);
+                    fetchProfile();
+                    clearActiveOrder();
+                } else if (order.status === 'CANCELLED') {
+                    showToast('تم إلغاء الطلب من قبل العميل.', false);
+                    fetchProfile();
+                    clearActiveOrder();
+                }
+            });
+            socket.on('order:cancelled', (order) => {
+                if (!order || (activeOrder && order.id !== activeOrder.id)) return;
+                showToast('تم إلغاء الطلب من قبل العميل.', false);
+                fetchProfile();
+                clearActiveOrder();
+            });
+            socket.on('order:status:update_request', () => {
+                showToast('يرجى تحديث حالة الطلب الحالية.', false);
+            });
+        }
+
+        async function requestDriverOtp() {
+            try {
+                if (!API_BASE_URL) {
+                    throw new Error('إعداد الخادم غير مكتمل.');
+                }
+                const phone = (authPhoneInput.value || '').trim();
+                if (!phone) {
+                    throw new Error('الرجاء إدخال رقم الجوال.');
+                }
+                authSendOtpBtn.disabled = true;
+                const response = await fetch(`${API_BASE_URL}/api/auth/otp/request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data?.message || 'تعذر إرسال رمز التحقق.');
+                }
+                authOtpGroup.classList.remove('hidden');
+                authOtpHint.classList.remove('hidden');
+                authVerifyBtn.classList.remove('hidden');
+                authOtpInput.focus();
+                setAuthAlert(data.mock ? `رمز تجريبي: ${data.code}` : 'تم إرسال الرمز إلى جوالك.', 'success');
+            } catch (error) {
+                setAuthAlert(error.message || 'حدث خطأ أثناء إرسال الرمز.');
+            } finally {
+                authSendOtpBtn.disabled = false;
+            }
+        }
+
+        async function verifyDriverOtp() {
+            try {
+                if (!API_BASE_URL) {
+                    throw new Error('إعداد الخادم غير مكتمل.');
+                }
+                const phone = (authPhoneInput.value || '').trim();
+                const code = (authOtpInput.value || '').trim();
+                if (!phone || !code) {
+                    throw new Error('الرجاء إدخال رقم الجوال والرمز.');
+                }
+                authVerifyBtn.disabled = true;
+                const response = await fetch(`${API_BASE_URL}/api/auth/otp/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, code, role: 'driver' })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data?.message || 'تعذر التحقق من الرمز.');
+                }
+                if (data?.temporary && data?.token) {
+                    localStorage.setItem('tempSetPassToken', data.token);
+                    localStorage.setItem('setPasswordNext', '/driver_app.html');
+                    setAuthAlert('يرجى تعيين كلمة مرور جديدة لإكمال التسجيل.', 'info');
+                    location.href = '/set_password.html';
+                    return;
+                }
+                if (!data?.token) {
+                    throw new Error('استجابة غير متوقعة من الخادم.');
+                }
+                setAuthToken(data.token);
+                setAuthAlert('تم تسجيل الدخول بنجاح.', 'success');
+                await enterApp();
+            } catch (error) {
+                setAuthAlert(error.message || 'حدث خطأ أثناء التحقق.');
+            } finally {
+                authVerifyBtn.disabled = false;
+            }
+        }
+
+        authSendOtpBtn.addEventListener('click', requestDriverOtp);
+        authVerifyBtn.addEventListener('click', verifyDriverOtp);
+        authOtpInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                verifyDriverOtp();
+            }
+        });
+
+        registrationForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/drivers/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        name: regName.value.trim(),
+                        phoneNumber: regPhone.value.trim(),
+                        vehicleType: regVehicle.value.trim(),
+                        licensePlate: regPlate.value.trim()
+                    })
+                });
+                const data = await response.json();
+                if (response.status === 401) {
+                    forceLogout('انتهت صلاحية الجلسة. الرجاء تسجيل الدخول من جديد.');
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(data.error || 'تعذر إرسال طلب التسجيل.');
+                }
+                showToast('تم استلام طلبك بنجاح، سيتم مراجعته قريباً.', false);
+                await fetchProfile();
+            } catch (error) {
+                showToast(error.message || 'حدث خطأ أثناء التسجيل.');
+            }
+        });
+
+        refreshStatusBtn.addEventListener('click', fetchProfile);
+
+        availabilityToggle.addEventListener('change', (event) => {
+            const status = event.target.checked ? 'online' : 'offline';
+            updateAvailability(status);
+        });
+
+        markPickedBtn.addEventListener('click', () => {
+            if (!activeOrder) return;
+            const nextStatus = markPickedBtn.dataset.nextStatus;
+            if (!nextStatus) return;
+            socket.emit('driver:update_status', { orderId: activeOrder.id, status: nextStatus });
+        });
+
+        markDeliveredBtn.addEventListener('click', () => {
+            if (!activeOrder) return;
+            socket.emit('driver:update_status', { orderId: activeOrder.id, status: 'DELIVERED' });
+        });
+
+        logoutBtn.addEventListener('click', () => {
+            forceLogout('تم تسجيل الخروج بنجاح.');
+        });
+
+        if (location.hash.startsWith('#token=')) {
+            const tokenValue = decodeURIComponent(location.hash.slice(7));
+            if (tokenValue) {
+                setAuthToken(tokenValue);
+            }
+            history.replaceState({}, document.title, location.pathname);
+        }
+        if (authToken) {
+            enterApp().catch(() => {
+                forceLogout('تعذر تسجيل الدخول. حاول مرة أخرى.');
+            });
+        } else {
+            showAuthScreen();
+        }
+    });
+  </script>
+    <script src="/assets/js/lang-boot.js" defer></script>
+    <script src="/assets/js/topbar.js" defer></script>
+</body>
+</html>

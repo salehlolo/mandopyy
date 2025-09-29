@@ -1,364 +1,2090 @@
-// هذا مثال توضيحي باستخدام Node.js و Express
-// لتشغيله، ستحتاج لتثبيت الحزم التالية: npm install express twilio cors sqlite3 crypto @googlemaps/google-maps-services-js
+require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const sqlite3 = require('sqlite3').verbose();
-const crypto = require('crypto'); // لإنشاء توكن عشوائي
-const { Client } = require("@googlemaps/google-maps-services-js");
+const crypto = require('crypto');
+const http = require('http');
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
+const bcrypt = require('bcrypt');
+const paymobService = require('./services/paymob');
+const { genCode6, sha256, now, ttlMs } = require('./utils/otp');
+let twilioClient = null;
+
+// Centralised configuration so developers can clearly see which environment
+// variables drive runtime behaviour. Defaults keep local development working
+// without real credentials.
+const APP_NAME = 'MANDUBO';
+const rawPort = process.env.PORT || 3000;
+const CONFIG = {
+  port: Number(rawPort),
+  adminPassword: process.env.ADMIN_PASSWORD || 'change-me',
+  apiBaseUrl: process.env.API_BASE_URL || `http://localhost:${rawPort}`,
+  mapProvider: process.env.MAP_PROVIDER || 'leaflet',
+  osmRoutingUrl: process.env.OSM_ROUTING_URL || 'https://router.project-osrm.org/route/v1',
+  nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
+  maptilerKey: process.env.MAPTILER_KEY || '',
+  mapboxToken: process.env.MAPBOX_TOKEN || '',
+  payProvider: process.env.PAY_PROVIDER || 'paymob',
+  paymobApiKey: process.env.PAYMOB_API_KEY || '',
+  paymobIntegrationIdCard: process.env.PAYMOB_INTEGRATION_ID_CARD || '',
+  paymobIframeId: process.env.PAYMOB_IFRAME_ID || '',
+  paymobHmacSecret: process.env.PAYMOB_HMAC_SECRET || '',
+  paymobBaseUrl: process.env.PAYMOB_BASE || 'https://accept.paymob.com',
+  corsOrigins: (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  searchRadiusKm: Number(process.env.SEARCH_RADIUS_KM || 7),
+  baseUrl: process.env.BASE_URL || `http://localhost:${rawPort}`,
+  frontendUrl: process.env.FRONTEND_URL || `http://localhost:${rawPort}`,
+  jwtSecret: process.env.JWT_SECRET || 'change-me',
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
+  twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
+  environment: process.env.NODE_ENV || 'development'
+};
+
+const TEMP_TOKEN_PURPOSES = {
+  SET_PASSWORD: 'set_password'
+};
+
+const paymobClient = paymobService.createClient({
+  apiKey: CONFIG.paymobApiKey,
+  baseUrl: CONFIG.paymobBaseUrl,
+  integrationId: CONFIG.paymobIntegrationIdCard,
+  iframeId: CONFIG.paymobIframeId
+});
+
+if (CONFIG.twilioAccountSid && CONFIG.twilioAuthToken && CONFIG.twilioFromNumber) {
+  try {
+    const twilio = require('twilio');
+    twilioClient = twilio(CONFIG.twilioAccountSid, CONFIG.twilioAuthToken);
+  } catch (error) {
+    console.warn('Failed to initialise Twilio client, falling back to mock OTP delivery.', error);
+    twilioClient = null;
+  }
+} else {
+  console.warn('Twilio credentials missing; OTP codes will be logged and returned in responses for development.');
+}
+
+const ORDER_STATUS = {
+  CREATED: 'CREATED',
+  SEARCHING_DRIVER: 'SEARCHING_DRIVER',
+  DRIVER_ASSIGNED: 'DRIVER_ASSIGNED',
+  DRIVER_ARRIVED_PICKUP: 'DRIVER_ARRIVED_PICKUP',
+  PICKED_UP: 'PICKED_UP',
+  IN_TRANSIT: 'IN_TRANSIT',
+  ARRIVED_DROPOFF: 'ARRIVED_DROPOFF',
+  DELIVERED: 'DELIVERED',
+  CANCELLED: 'CANCELLED'
+};
+
+const ORDER_TRANSITIONS = {
+  [ORDER_STATUS.CREATED]: [ORDER_STATUS.SEARCHING_DRIVER, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.SEARCHING_DRIVER]: [ORDER_STATUS.DRIVER_ASSIGNED, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.DRIVER_ASSIGNED]: [ORDER_STATUS.DRIVER_ARRIVED_PICKUP, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.DRIVER_ARRIVED_PICKUP]: [ORDER_STATUS.PICKED_UP, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.PICKED_UP]: [ORDER_STATUS.IN_TRANSIT, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.IN_TRANSIT]: [ORDER_STATUS.ARRIVED_DROPOFF, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.ARRIVED_DROPOFF]: [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]
+};
+
+class HttpError extends Error {
+  constructor(status, message, extra = {}) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+    this.extra = extra;
+  }
+}
 
 const app = express();
-app.use(cors());
+app.use(helmet());
 app.use(express.json());
 
-// --- إعدادات Google Maps ---
-// هام: هذا المفتاح سري. في تطبيق حقيقي، يجب حفظه كمتغير بيئة.
-const GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"; // <-- ضع مفتاح API الخاص بك هنا
-const googleMapsClient = new Client({});
-
-// --- إعدادات المشرف (Admin) ---
-const ADMIN_SECRET_KEY = "supersecretpassword123"; // كلمة سر المشرف (تغييرها في تطبيق حقيقي)
-let adminToken = null; // لتخزين توكن جلسة المشرف
-
-// --- إعداد قاعدة البيانات SQLite ---
-const db = new sqlite3.Database('./delivery_app.db', (err) => {
-    if (err) {
-        console.error("Error opening database", err.message);
-    } else {
-        console.log("Connected to the SQLite database.");
-        // إنشاء الجداول إذا لم تكن موجودة
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            phone_number TEXT UNIQUE NOT NULL,
-            name TEXT,
-            role TEXT DEFAULT 'customer',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
-        db.run(`CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER NOT NULL,
-            pickup_lat REAL NOT NULL,
-            pickup_lng REAL NOT NULL,
-            dropoff_lat REAL NOT NULL,
-            dropoff_lng REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT 'SEARCHING_DRIVER',
-            price REAL,
-            distance_km REAL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (customer_id) REFERENCES users (id)
-        )`);
-        // --- جدول جديد للمناديب ---
-        db.run(`CREATE TABLE IF NOT EXISTS drivers (
-            user_id INTEGER PRIMARY KEY NOT NULL,
-            vehicle_type TEXT NOT NULL,
-            license_plate TEXT,
-            verified BOOLEAN DEFAULT 0,
-            availability_status TEXT DEFAULT 'offline',
-            last_lat REAL,
-            last_lng REAL,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )`);
-    }
+const otpAndQuoteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
+const payLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
-// --- إعدادات Twilio ---
-const accountSid = 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // حسابك في Twilio
-const authToken = 'your_twilio_auth_token';       // توكن المصادقة من Twilio
-const twilioClient = require('twilio')(accountSid, authToken);
-const twilioPhoneNumber = '+15017122661'; // رقمك الذي اشتريته من Twilio
+// Resolve allowed origins for CORS. If the developer did not provide
+// `CORS_ORIGINS`, we default to local addresses only to avoid exposing the
+// API publicly by accident.
+const defaultCorsOrigins = [
+  `http://localhost:${CONFIG.port}`,
+  `http://127.0.0.1:${CONFIG.port}`,
+  CONFIG.frontendUrl,
+  CONFIG.apiBaseUrl
+].filter(Boolean);
+const allowList = CONFIG.corsOrigins.length ? CONFIG.corsOrigins : defaultCorsOrigins;
+const uniqueAllowList = [...new Set(allowList)];
+const allowOrigin = (origin, callback) => {
+  if (!origin) {
+    return callback(null, true);
+  }
+  if (!uniqueAllowList.length || uniqueAllowList.includes(origin)) {
+    return callback(null, true);
+  }
+  return callback(new Error('Not allowed by CORS'));
+};
 
-const otpStore = {}; 
-const sessionStore = {}; // لتخزين جلسات المستخدمين { token: userId }
+app.use(
+  cors({
+    origin: allowOrigin,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: false
+  })
+);
 
-// --- نقطة API لطلب كود التحقق ---
-app.post('/api/auth/request-otp', async (req, res) => {
-    const { phoneNumber } = req.body;
-    if (!phoneNumber) return res.status(400).json({ error: 'Phone number is required.' });
+app.use(['/v1/auth/otp', '/v1/auth/otp/', '/api/auth/otp', '/api/auth/otp/', '/api/quote'], otpAndQuoteLimiter);
 
-    const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-    const expires = Date.now() + 5 * 60 * 1000;
-    otpStore[phoneNumber] = { code: otpCode, expires };
-    console.log(`Generated OTP for ${phoneNumber}: ${otpCode}`);
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: allowOrigin,
+    methods: ['GET', 'POST'],
+    credentials: false
+  }
+});
 
+const resolvedDbPath = (() => {
+  const customPath = process.env.SQLITE_DB_PATH;
+  if (!customPath) {
+    return path.join(__dirname, 'delivery_app.db');
+  }
+  if (customPath === ':memory:') {
+    return ':memory:';
+  }
+  return path.isAbsolute(customPath)
+    ? customPath
+    : path.join(__dirname, customPath);
+})();
+
+const db = new sqlite3.Database(resolvedDbPath);
+
+const dbRun = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.run(sql, params, function runCallback(err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve({ lastID: this.lastID, changes: this.changes });
+      }
+    });
+  });
+
+const dbGet = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row || null);
+      }
+    });
+  });
+
+const dbAll = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+
+const closeDatabase = () =>
+  new Promise((resolve, reject) => {
+    db.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+
+async function ensureColumn(table, column, definition) {
+  const info = await dbAll(`PRAGMA table_info(${table})`);
+  const exists = info.some((row) => row.name === column);
+  if (!exists) {
+    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
+async function migrateUsersTable() {
+  const tableExists = await dbGet(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+  );
+  if (!tableExists) {
+    await dbRun(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        phone_number TEXT,
+        name TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        dob TEXT,
+        gender TEXT,
+        role TEXT DEFAULT 'customer',
+        oauth_provider TEXT,
+        oauth_sub TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+  } else {
+    const info = await dbAll('PRAGMA table_info(users)');
+    const columns = info.map((row) => row.name);
+    const phoneColumn = info.find((row) => row.name === 'phone_number');
+    const needsMigration =
+      !columns.includes('email') ||
+      !columns.includes('password_hash') ||
+      !columns.includes('oauth_provider') ||
+      !columns.includes('oauth_sub') ||
+      (phoneColumn && phoneColumn.notnull === 1);
+
+    if (needsMigration) {
+      await dbRun('ALTER TABLE users RENAME TO users_old');
+      await dbRun(`CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT UNIQUE,
+          password_hash TEXT,
+          phone_number TEXT,
+          name TEXT,
+          first_name TEXT,
+          last_name TEXT,
+          dob TEXT,
+          gender TEXT,
+          role TEXT DEFAULT 'customer',
+          oauth_provider TEXT,
+          oauth_sub TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+      await dbRun(`INSERT INTO users (id, email, password_hash, phone_number, name, first_name, last_name, dob, gender, role, oauth_provider, oauth_sub, created_at)
+                   SELECT id,
+                          NULL,
+                          NULL,
+                          phone_number,
+                          name,
+                          NULL,
+                          NULL,
+                          NULL,
+                          NULL,
+                          role,
+                          NULL,
+                          NULL,
+                          created_at
+                     FROM users_old`);
+      await dbRun('DROP TABLE users_old');
+    } else {
+      await ensureColumn('users', 'password_hash', 'password_hash TEXT');
+      await ensureColumn('users', 'first_name', 'first_name TEXT');
+      await ensureColumn('users', 'last_name', 'last_name TEXT');
+      await ensureColumn('users', 'dob', 'dob TEXT');
+      await ensureColumn('users', 'gender', 'gender TEXT');
+      await ensureColumn('users', 'oauth_provider', 'oauth_provider TEXT');
+      await ensureColumn('users', 'oauth_sub', 'oauth_sub TEXT');
+    }
+  }
+
+  await dbRun(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL'
+  );
+  await dbRun(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number) WHERE phone_number IS NOT NULL'
+  );
+}
+
+async function initDatabase() {
+  await migrateUsersTable();
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS drivers (
+      user_id INTEGER PRIMARY KEY NOT NULL,
+      vehicle_type TEXT NOT NULL,
+      license_plate TEXT,
+      verified BOOLEAN DEFAULT 0,
+      availability_status TEXT DEFAULT 'offline',
+      last_lat REAL,
+      last_lng REAL,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      driver_id INTEGER,
+      pickup_lat REAL NOT NULL,
+      pickup_lng REAL NOT NULL,
+      dropoff_lat REAL NOT NULL,
+      dropoff_lng REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT '${ORDER_STATUS.CREATED}',
+      price REAL,
+      distance_km REAL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES users (id),
+      FOREIGN KEY (driver_id) REFERENCES drivers (user_id)
+    )`);
+
+  // Ensure legacy databases pick up any missing columns.
+  await ensureColumn('orders', 'driver_id', 'driver_id INTEGER');
+  await ensureColumn('orders', 'distance_km', 'distance_km REAL');
+  await ensureColumn('orders', 'price', 'price REAL');
+  await ensureColumn('orders', 'status', `status TEXT NOT NULL DEFAULT '${ORDER_STATUS.CREATED}'`);
+  await ensureColumn('orders', 'price_total', 'price_total REAL');
+  await ensureColumn('orders', 'payment_method', "payment_method TEXT DEFAULT 'cash'");
+  await ensureColumn('orders', 'payment_status', "payment_status TEXT DEFAULT 'pending'");
+  await ensureColumn('orders', 'pickup_label', 'pickup_label TEXT');
+  await ensureColumn('orders', 'dropoff_label', 'dropoff_label TEXT');
+  await ensureColumn('orders', 'pin_code', 'pin_code TEXT');
+  await ensureColumn('orders', 'created_at', 'created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn('drivers', 'availability_status', "availability_status TEXT DEFAULT 'offline'");
+  await ensureColumn('drivers', 'last_lat', 'last_lat REAL');
+  await ensureColumn('drivers', 'last_lng', 'last_lng REAL');
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      provider TEXT,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT DEFAULT 'EGP',
+      status TEXT NOT NULL,
+      provider_ref TEXT,
+      raw TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders (id)
+    )`);
+
+  await dbRun('CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)');
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      label TEXT,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS otps (
+      phone TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER DEFAULT 0
+    )`);
+
+  const otpInfo = await dbAll('PRAGMA table_info(otps)');
+  const needsOtpRebuild = otpInfo.some((row) => row.name === 'code');
+  if (needsOtpRebuild) {
+    await dbRun('ALTER TABLE otps RENAME TO otps_old');
+    await dbRun(`CREATE TABLE otps (
+        phone TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER DEFAULT 0
+      )`);
+    await dbRun('DROP TABLE otps_old');
+  } else if (!otpInfo.some((row) => row.name === 'attempts')) {
+    await dbRun('ALTER TABLE otps ADD COLUMN attempts INTEGER DEFAULT 0');
+  }
+
+  await dbRun(`CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      window_start INTEGER NOT NULL
+    )`);
+}
+
+
+const driverSockets = new Map();
+const customerSockets = new Map();
+let adminToken = null;
+
+function normalisePhone(value) {
+  return (value || '').replace(/[^+\d]/g, '').trim();
+}
+
+function signUserToken(user) {
+  return jwt.sign({ sub: user.id, role: user.role }, CONFIG.jwtSecret, { expiresIn: '7d' });
+}
+
+function signTemporaryToken(user, purpose, expiresIn = '15m') {
+  return jwt.sign({ sub: user.id, role: user.role, purp: purpose }, CONFIG.jwtSecret, {
+    expiresIn
+  });
+}
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const toRad = (value) => (value * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function verifyPaymobHmac(payload, secret) {
+  if (!payload || !payload.obj || !secret) {
+    return false;
+  }
+  const transaction = payload.obj;
+  const fields = [
+    'amount_cents',
+    'created_at',
+    'currency',
+    'error_occured',
+    'has_parent_transaction',
+    'id',
+    'integration_id',
+    'is_3d_secure',
+    'is_auth',
+    'is_capture',
+    'is_refunded',
+    'is_standalone_payment',
+    'is_voided',
+    'order.id',
+    'owner',
+    'pending',
+    'source_data.pan',
+    'source_data.sub_type',
+    'source_data.type',
+    'success'
+  ];
+  const toString = (value) => (value == null ? '' : String(value));
+  const concatenated = fields
+    .map((path) => {
+      const segments = path.split('.');
+      let value = transaction;
+      for (const segment of segments) {
+        value = value ? value[segment] : undefined;
+      }
+      return toString(value);
+    })
+    .join('');
+  const computed = crypto
+    .createHmac('sha512', secret)
+    .update(concatenated)
+    .digest('hex');
+  return computed === String(payload.hmac || '').toLowerCase();
+}
+
+async function getUserById(userId) {
+  return dbGet('SELECT * FROM users WHERE id = ?', [userId]);
+}
+
+async function getUserByPhone(phoneNumber) {
+  return dbGet('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
+}
+
+function serialiseUserProfile(user) {
+  if (!user) {
+    return null;
+  }
+  return {
+    id: user.id,
+    first_name: user.first_name || '',
+    last_name: user.last_name || '',
+    phone: user.phone_number || '',
+    dob: user.dob || '',
+    gender: user.gender || '',
+    nameFallback: user.name || ''
+  };
+}
+
+async function ensureUserByPhone(phoneNumber, desiredRole = 'customer') {
+  const existing = await getUserByPhone(phoneNumber);
+  if (existing) {
+    if (desiredRole === 'driver' && existing.role !== 'driver') {
+      await dbRun('UPDATE users SET role = ? WHERE id = ?', ['driver', existing.id]);
+      return getUserById(existing.id);
+    }
+    return existing;
+  }
+  const insert = await dbRun(
+    'INSERT INTO users (phone_number, role) VALUES (?, ?)',
+    [phoneNumber, desiredRole]
+  );
+  return getUserById(insert.lastID);
+}
+
+const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MIN || 5);
+const OTP_TTL_MS = ttlMs(OTP_TTL_MINUTES);
+const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const OTP_RATE_LIMIT_MAX = Number(process.env.OTP_RATE_LIMIT_PER_15M || 3);
+const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 5);
+
+async function requestOtpForPhone(phoneNumber) {
+  if (!phoneNumber || phoneNumber.length < 6) {
+    throw new HttpError(400, 'رقم الجوال غير صالح');
+  }
+
+  const rateKey = `otp:${phoneNumber}`;
+  const existingLimit = await getRateLimit(rateKey);
+  const nowTs = now();
+
+  if (!existingLimit) {
+    await setRateLimit(rateKey, 1, nowTs);
+  } else {
+    const windowStart = Number(existingLimit.window_start);
+    const withinWindow = nowTs - windowStart < OTP_RATE_LIMIT_WINDOW_MS;
+    const nextCount = withinWindow ? Number(existingLimit.count) + 1 : 1;
+    const effectiveWindowStart = withinWindow ? windowStart : nowTs;
+    if (withinWindow && nextCount > OTP_RATE_LIMIT_MAX) {
+      throw new HttpError(429, 'تجاوزت الحد المسموح لطلبات رمز التحقق. حاول لاحقًا.');
+    }
+    await setRateLimit(rateKey, nextCount, effectiveWindowStart);
+  }
+
+  const code = genCode6();
+  const hash = sha256(code);
+  const expiresAt = nowTs + OTP_TTL_MS;
+  await upsertOtp(phoneNumber, hash, expiresAt);
+  const delivery = await sendOtpSms(phoneNumber, code);
+
+  return {
+    success: true,
+    mock: delivery.mock,
+    expiresIn: Math.floor(OTP_TTL_MS / 1000),
+    code: delivery.mock ? code : undefined
+  };
+}
+
+async function consumeOtp(phoneNumber, code) {
+  if (!code || String(code).trim().length < 4) {
+    throw new HttpError(400, 'رمز التحقق مطلوب');
+  }
+
+  const record = await getOtp(phoneNumber);
+  if (!record) {
+    throw new HttpError(400, 'لا يوجد رمز تحقق لهذا الرقم');
+  }
+
+  if (now() > Number(record.expires_at)) {
+    await deleteOtp(phoneNumber);
+    throw new HttpError(400, 'انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا');
+  }
+
+  if (Number(record.attempts) >= OTP_MAX_ATTEMPTS) {
+    throw new HttpError(400, 'تجاوزت عدد المحاولات المسموح، اطلب رمزًا جديدًا');
+  }
+
+  const providedHash = sha256(String(code).trim());
+  await incrementOtpAttempt(phoneNumber);
+  if (providedHash !== record.code_hash) {
+    throw new HttpError(400, 'رمز التحقق غير صحيح');
+  }
+
+  await deleteOtp(phoneNumber);
+}
+
+async function upsertOtp(phoneNumber, codeHash, expiresAt) {
+  await dbRun(
+    `INSERT INTO otps (phone, code_hash, expires_at, attempts)
+       VALUES (?, ?, ?, 0)
+       ON CONFLICT(phone) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0`,
+    [phoneNumber, codeHash, expiresAt]
+  );
+}
+
+async function getOtp(phoneNumber) {
+  return dbGet('SELECT phone, code_hash, expires_at, attempts FROM otps WHERE phone = ?', [phoneNumber]);
+}
+
+async function incrementOtpAttempt(phoneNumber) {
+  await dbRun('UPDATE otps SET attempts = attempts + 1 WHERE phone = ?', [phoneNumber]);
+}
+
+async function deleteOtp(phoneNumber) {
+  await dbRun('DELETE FROM otps WHERE phone = ?', [phoneNumber]);
+}
+
+async function getRateLimit(key) {
+  return dbGet('SELECT count, window_start FROM rate_limits WHERE key = ?', [key]);
+}
+
+async function setRateLimit(key, count, windowStart) {
+  await dbRun(
+    `INSERT INTO rate_limits (key, count, window_start)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET count = excluded.count, window_start = excluded.window_start`,
+    [key, count, windowStart]
+  );
+}
+
+async function sendOtpSms(phoneNumber, code) {
+  if (!twilioClient || !CONFIG.twilioFromNumber) {
+    console.info(`[OTP] Mock code for ${phoneNumber}: ${code}`);
+    return { delivered: false, mock: true };
+  }
+  try {
+    await twilioClient.messages.create({
+      to: phoneNumber,
+      from: CONFIG.twilioFromNumber,
+      body: `رمز التحقق الخاص بك في ${APP_NAME} هو ${code}`
+    });
+    return { delivered: true, mock: false };
+  } catch (error) {
+    console.error('Failed to send OTP via Twilio', error);
+    return { delivered: false, mock: true };
+  }
+}
+
+async function getDriverById(userId) {
+  return dbGet('SELECT * FROM drivers WHERE user_id = ?', [userId]);
+}
+
+async function getOrderDetails(orderId) {
+  const row = await dbGet(
+    `SELECT o.*, 
+            cu.name AS customer_name, cu.phone_number AS customer_phone,
+            du.name AS driver_name, du.phone_number AS driver_phone,
+            d.vehicle_type, d.license_plate
+       FROM orders o
+       JOIN users cu ON cu.id = o.customer_id
+       LEFT JOIN drivers d ON d.user_id = o.driver_id
+       LEFT JOIN users du ON du.id = o.driver_id
+      WHERE o.id = ?`,
+    [orderId]
+  );
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    status: row.status,
+    price: row.price != null ? Number(row.price) : null,
+    priceTotal:
+      row.price_total != null
+        ? Number(row.price_total)
+        : row.price != null
+        ? Number(row.price)
+        : null,
+    distanceKm: row.distance_km != null ? Number(row.distance_km) : null,
+    createdAt: row.created_at,
+    paymentMethod: row.payment_method || 'cash',
+    paymentStatus: row.payment_status || 'pending',
+    pickupLabel: row.pickup_label || null,
+    dropoffLabel: row.dropoff_label || null,
+    pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
+    dropoff: { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) },
+    pinCode: row.pin_code || null,
+    customer: {
+      id: row.customer_id,
+      name: row.customer_name || '',
+      phoneNumber: row.customer_phone
+    },
+    driver: row.driver_id
+      ? {
+          id: row.driver_id,
+          name: row.driver_name || '',
+          phoneNumber: row.driver_phone || '',
+          vehicleType: row.vehicle_type || '',
+          licensePlate: row.license_plate || ''
+        }
+      : null
+  };
+}
+
+async function quoteTrip(pickup, dropoff) {
+  const normalisePoint = (point) => {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new HttpError(400, 'Invalid coordinates provided');
+    }
+    return { lat, lng };
+  };
+
+  const origin = normalisePoint(pickup);
+  const destination = normalisePoint(dropoff);
+
+  const baseUrl = (CONFIG.osmRoutingUrl || '').replace(/\/$/, '') ||
+    'https://router.project-osrm.org/route/v1';
+  const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+  const url = `${baseUrl}/driving/${coords}?overview=false&geometries=geojson`;
+
+  let data;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'mandubo-mvp/1.0'
+      }
+    });
+    if (!response.ok) {
+      throw new HttpError(502, 'Routing service unavailable');
+    }
+    data = await response.json();
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(502, 'Failed to reach routing service');
+  }
+
+  const route = data?.routes?.[0];
+  if (!route) {
+    throw new HttpError(404, 'No route found');
+  }
+
+  const distanceKm = route.distance / 1000;
+  const durationMin = route.duration / 60;
+  const baseFare = 20;
+  const perKmRate = 4;
+  const price = baseFare + distanceKm * perKmRate;
+
+  return {
+    distanceKm: Number(distanceKm.toFixed(2)),
+    durationMin: Number(durationMin.toFixed(0)),
+    price: Number(price.toFixed(2)),
+    priceTotal: Number(price.toFixed(2))
+  };
+}
+
+function emitToCustomer(customerId, event, payload) {
+  const socket = customerSockets.get(customerId);
+  if (socket) {
+    socket.emit(event, payload);
+  }
+}
+
+function emitToDriver(driverId, event, payload) {
+  const socket = driverSockets.get(driverId);
+  if (socket) {
+    socket.emit(event, payload);
+  }
+}
+
+async function emitOrderStatus(orderId) {
+  const details = await getOrderDetails(orderId);
+  if (!details) {
+    return;
+  }
+  io.to(`order_${orderId}`).emit('order:status', details);
+  emitToCustomer(details.customer.id, 'order:status', details);
+  if (details.driver) {
+    emitToDriver(details.driver.id, 'order:status', details);
+  }
+}
+
+async function requestDriverStatusUpdate(orderId, driverId) {
+  const details = await getOrderDetails(orderId);
+  if (!details) {
+    return;
+  }
+  emitToDriver(driverId, 'order:status:update_request', details);
+}
+
+async function findNearestDriver(pickup) {
+  const drivers = await dbAll(
+    `SELECT user_id, last_lat, last_lng
+       FROM drivers
+      WHERE verified = 1 AND availability_status = 'online'
+        AND last_lat IS NOT NULL AND last_lng IS NOT NULL`
+  );
+
+  const candidates = drivers
+    .map((driver) => ({
+      ...driver,
+      distanceKm: haversineDistance(pickup.lat, pickup.lng, driver.last_lat, driver.last_lng)
+    }))
+    .filter((driver) => driver.distanceKm <= CONFIG.searchRadiusKm)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  return candidates[0] || null;
+}
+
+async function assignDriverToOrder(orderId) {
+  const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+  if (!order || order.status !== ORDER_STATUS.SEARCHING_DRIVER) {
+    return false;
+  }
+
+  const nearestDriver = await findNearestDriver({ lat: order.pickup_lat, lng: order.pickup_lng });
+  if (!nearestDriver) {
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [
+      ORDER_STATUS.CANCELLED,
+      orderId
+    ]);
+    if ((order.payment_method || 'cash').toLowerCase() === 'card') {
+      await dbRun('UPDATE orders SET payment_status = ? WHERE id = ?', ['failed', orderId]);
+    }
+    const details = await getOrderDetails(orderId);
+    const payload = details
+      ? { ...details, reason: 'NO_DRIVER' }
+      : { id: orderId, status: order.status, reason: 'NO_DRIVER' };
+    emitToCustomer(order.customer_id, 'order:status', payload);
+    io.to(`order_${orderId}`).emit('order:status', payload);
+    return false;
+  }
+
+  const update = await dbRun(
+    'UPDATE orders SET driver_id = ?, status = ? WHERE id = ? AND status = ?',
+    [nearestDriver.user_id, ORDER_STATUS.DRIVER_ASSIGNED, orderId, ORDER_STATUS.SEARCHING_DRIVER]
+  );
+  if (!update.changes) {
+    return false;
+  }
+
+  await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+    'busy',
+    nearestDriver.user_id
+  ]);
+
+  const details = await getOrderDetails(orderId);
+  if (details) {
+    emitToCustomer(details.customer.id, 'order:driver_assigned', details);
+    emitToDriver(nearestDriver.user_id, 'order:offer', details);
+    io.to(`order_${orderId}`).emit('order:driver_assigned', details);
+    await requestDriverStatusUpdate(orderId, nearestDriver.user_id);
+  }
+
+  return true;
+}
+
+async function assignPendingOrders() {
+  const pending = await dbAll(
+    'SELECT id FROM orders WHERE status = ? ORDER BY created_at ASC',
+    [ORDER_STATUS.SEARCHING_DRIVER]
+  );
+  for (const row of pending) {
+    await assignDriverToOrder(row.id);
+  }
+}
+
+// --- Configuration endpoint shared by the three front-ends ---
+app.get('/config.js', (req, res) => {
+  res.type('application/javascript');
+  res.send(`// generated by server\nwindow.__APP_CONFIG__ = ${JSON.stringify({
+    API_BASE_URL: CONFIG.apiBaseUrl,
+    NODE_ENV: CONFIG.environment,
+    MAP_PROVIDER: CONFIG.mapProvider,
+    OSM_ROUTING_URL: CONFIG.osmRoutingUrl,
+    NOMINATIM_URL: CONFIG.nominatimUrl,
+    PAY_PROVIDER: CONFIG.payProvider,
+    PAYMOB_IFRAME_ID: CONFIG.paymobIframeId,
+    MAPTILER_KEY: CONFIG.maptilerKey,
+    MAPBOX_TOKEN: CONFIG.mapboxToken
+  })};`);
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+// --- Authentication Endpoints (OTP only) ---
+const otpRequestHandlers = ['/api/auth/otp/request', '/v1/auth/otp/request'];
+otpRequestHandlers.forEach((route) => {
+  app.post(route, async (req, res, next) => {
     try {
-        await twilioClient.messages.create({
-            body: `رمز التحقق الخاص بك في تطبيق وصلني هو: ${otpCode}`,
-            from: twilioPhoneNumber,
-            to: phoneNumber
-        });
-        res.status(200).json({ success: true, message: 'OTP sent successfully.' });
+      const { phone } = req.body || {};
+      const normalised = normalisePhone(phone);
+      const payload = await requestOtpForPhone(normalised);
+      res.json(payload);
     } catch (error) {
-        console.error("Error sending SMS:", error);
-        if (error.code === 20003) {
-             console.log("Twilio auth failed, but simulating success for testing.");
-             return res.status(200).json({ success: true, message: 'OTP sent successfully (Simulated).' });
-        }
-        res.status(500).json({ error: 'Failed to send OTP.' });
+      next(error);
     }
+  });
 });
 
-// --- نقطة API للتحقق من الكود وإنشاء جلسة ---
-app.post('/api/auth/verify-otp', (req, res) => {
-    const { phoneNumber, otpCode } = req.body;
-    if (!phoneNumber || !otpCode) return res.status(400).json({ error: 'Phone number and OTP are required.' });
-
-    const storedOtp = otpStore[phoneNumber];
-    if (storedOtp && storedOtp.code === otpCode && Date.now() < storedOtp.expires) {
-        delete otpStore[phoneNumber];
-
-        // البحث عن المستخدم أو إنشاؤه
-        db.get('SELECT * FROM users WHERE phone_number = ?', [phoneNumber], (err, user) => {
-            if (err) return res.status(500).json({ error: 'Database error.' });
-
-            const handleUserLogin = (userId, userRole, isDriverVerified) => {
-                const token = crypto.randomBytes(32).toString('hex');
-                sessionStore[token] = userId;
-                res.status(200).json({ 
-                    success: true, 
-                    message: 'Login successful!', 
-                    token,
-                    role: userRole,
-                    isDriverVerified: isDriverVerified
-                });
-            };
-
-            if (user) { // المستخدم موجود
-                 // التحقق إذا كان سائقاً
-                db.get('SELECT verified FROM drivers WHERE user_id = ?', [user.id], (err, driver) => {
-                     handleUserLogin(user.id, user.role, driver ? !!driver.verified : null);
-                });
-            } else { // مستخدم جديد
-                db.run('INSERT INTO users (phone_number) VALUES (?)', [phoneNumber], function(err) {
-                    if (err) return res.status(500).json({ error: 'Failed to create user.' });
-                    handleUserLogin(this.lastID, 'customer', null);
-                });
-            }
-        });
-    } else {
-        res.status(400).json({ error: 'Invalid or expired OTP.' });
-    }
-});
-
-// --- Middleware للتحقق من التوكن ---
-const authenticate = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token && sessionStore[token]) {
-        req.userId = sessionStore[token];
-        next();
-    } else {
-        res.status(401).json({ error: 'Unauthorized' });
-    }
-};
-
-// --- نقطة API جديدة لتسجيل المندوب ---
-app.post('/api/drivers/register', authenticate, (req, res) => {
-    const userId = req.userId;
-    const { name, vehicleType, licensePlate } = req.body;
-
-    if (!name || !vehicleType || !licensePlate) {
-        return res.status(400).json({ error: 'Name, vehicle type, and license plate are required.' });
-    }
-
-    db.get('SELECT * FROM drivers WHERE user_id = ?', [userId], (err, driver) => {
-        if (err) return res.status(500).json({ error: 'Database error while checking driver.' });
-        if (driver) return res.status(409).json({ error: 'This user is already registered as a driver.' });
-
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION;');
-            
-            db.run(`UPDATE users SET name = ?, role = 'driver' WHERE id = ?`, [name, userId]);
-            
-            const driverSql = `INSERT INTO drivers (user_id, vehicle_type, license_plate) VALUES (?, ?, ?)`;
-            db.run(driverSql, [userId, vehicleType, licensePlate], function(err) {
-                if (err) {
-                    db.run('ROLLBACK;');
-                    console.error("Driver registration error:", err);
-                    return res.status(500).json({ error: 'Failed to register driver.' });
-                }
-                
-                db.run('COMMIT;', (commitErr) => {
-                     if (commitErr) {
-                         console.error("Commit error:", commitErr);
-                         return res.status(500).json({ error: 'Failed to commit driver registration.' });
-                     }
-                     res.status(201).json({ success: true, message: 'Driver registration submitted successfully. Waiting for approval.' });
-                });
-            });
-        });
-    });
-});
-
-
-// --- نقطة API جديدة للحصول على تسعيرة ---
-app.post('/api/quote', authenticate, async (req, res) => {
-    const { pickup, dropoff } = req.body;
-    if (!pickup || !dropoff) return res.status(400).json({ error: 'Pickup and dropoff locations are required.'});
-
+const otpVerifyHandlers = ['/api/auth/otp/verify', '/v1/auth/otp/verify'];
+otpVerifyHandlers.forEach((route) => {
+  app.post(route, async (req, res, next) => {
     try {
-        const directionsResponse = await googleMapsClient.directions({
-            params: {
-                origin: pickup,
-                destination: dropoff,
-                key: GOOGLE_MAPS_API_KEY,
-                mode: 'DRIVING',
-            },
-            timeout: 2000 // ثانيتان
+      const { phone, code, role } = req.body || {};
+      const normalised = normalisePhone(phone);
+      if (!normalised || normalised.length < 6) {
+        throw new HttpError(400, 'رقم الجوال غير صالح');
+      }
+      await consumeOtp(normalised, code);
+
+      const desiredRole = String(role || 'customer').toLowerCase() === 'driver' ? 'driver' : 'customer';
+      let user = await getUserByPhone(normalised);
+      let created = false;
+
+      if (!user) {
+        user = await ensureUserByPhone(normalised, desiredRole);
+        created = true;
+      } else if (desiredRole === 'driver' && user.role !== 'driver') {
+        await dbRun('UPDATE users SET role = ? WHERE id = ?', ['driver', user.id]);
+        user = await getUserById(user.id);
+      }
+
+      await dbRun('UPDATE users SET phone_number = ? WHERE id = ?', [normalised, user.id]);
+
+      const freshUser = await getUserById(user.id);
+      const driver = await getDriverById(freshUser.id);
+      const needsPassword = created || !freshUser.password_hash;
+
+      if (needsPassword) {
+        const tempToken = signTemporaryToken(freshUser, TEMP_TOKEN_PURPOSES.SET_PASSWORD);
+        return res.json({
+          success: true,
+          token: tempToken,
+          role: freshUser.role,
+          temporary: true
         });
+      }
 
-        if (directionsResponse.data.routes.length > 0) {
-            const route = directionsResponse.data.routes[0].legs[0];
-            const distanceKm = route.distance.value / 1000; // بالكيلومتر
-            const durationMin = route.duration.value / 60; // بالدقائق
-
-            // نفس منطق التسعير
-            const baseFare = 20;
-            const perKmRate = 4;
-            const price = baseFare + (distanceKm * perKmRate);
-
-            res.status(200).json({
-                distanceKm: distanceKm.toFixed(2),
-                durationMin: durationMin.toFixed(0),
-                price: price.toFixed(2)
-            });
-        } else {
-            res.status(404).json({ error: "Could not find a route." });
-        }
-    } catch (e) {
-        console.error("Google Maps API error:", e);
-        res.status(500).json({ error: "Failed to calculate quote." });
+      const token = signUserToken(freshUser);
+      res.json({
+        success: true,
+        token,
+        role: freshUser.role,
+        isDriverVerified: driver ? Boolean(driver.verified) : null,
+        temporary: false
+      });
+    } catch (error) {
+      next(error);
     }
+  });
 });
 
-// --- نقطة API لإنشاء طلب جديد (معدلة لاستخدام Google Maps) ---
-app.post('/api/orders', authenticate, async (req, res) => { // Make async
-    const { pickup, dropoff } = req.body;
-    const customerId = req.userId;
+const authenticateSetPassword = authenticateWithPurpose(TEMP_TOKEN_PURPOSES.SET_PASSWORD);
 
-    if (!pickup || !dropoff) return res.status(400).json({ error: 'Pickup and dropoff locations are required.'});
-    
-    // إعادة حساب السعر في الواجهة الخلفية لضمان الدقة والأمان
-    try {
-        const directionsResponse = await googleMapsClient.directions({
-            params: {
-                origin: pickup,
-                destination: dropoff,
-                key: GOOGLE_MAPS_API_KEY,
-                mode: 'DRIVING',
-            }
-        });
-
-        if (directionsResponse.data.routes.length > 0) {
-            const route = directionsResponse.data.routes[0].legs[0];
-            const distanceKm = route.distance.value / 1000;
-
-            const baseFare = 20;
-            const perKmRate = 4;
-            const price = baseFare + (distanceKm * perKmRate);
-
-            const sql = `INSERT INTO orders (customer_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, price, distance_km) VALUES (?, ?, ?, ?, ?, ?, ?)`;
-            const params = [customerId, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, price.toFixed(2), distanceKm.toFixed(2)];
-
-            db.run(sql, params, function(err) {
-                if (err) return res.status(500).json({ error: 'Failed to create order.' });
-                
-                res.status(201).json({
-                    id: this.lastID,
-                    customerId,
-                    pickup,
-                    dropoff,
-                    price: price.toFixed(2),
-                    distanceKm: distanceKm.toFixed(2),
-                    status: 'SEARCHING_DRIVER'
-                });
-            });
-        } else {
-            return res.status(404).json({ error: "Could not find a route to create order." });
-        }
-    } catch (e) {
-        console.error("Google Maps API error on order creation:", e);
-        return res.status(500).json({ error: "Failed to create order due to maps service error." });
+app.get('/v1/auth/lookup', async (req, res, next) => {
+  try {
+    const normalised = normalisePhone(req.query.phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
     }
+    const user = await getUserByPhone(normalised);
+    res.json({ exists: Boolean(user && user.password_hash) });
+  } catch (error) {
+    next(error);
+  }
 });
 
-// --- نقطة API جديدة لجلب سجل الطلبات ---
-app.get('/api/orders/history', authenticate, (req, res) => {
-    const customerId = req.userId;
-
-    const sql = "SELECT id, status, price, created_at FROM orders WHERE customer_id = ? ORDER BY created_at DESC";
-
-    db.all(sql, [customerId], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: "Failed to retrieve order history." });
-        }
-        res.status(200).json(rows);
-    });
-});
-
-// --- نقاط API خاصة بالمشرف (Admin) ---
-
-// 1. تسجيل دخول المشرف
-app.post('/api/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === ADMIN_SECRET_KEY) {
-        adminToken = crypto.randomBytes(32).toString('hex');
-        res.status(200).json({ success: true, token: adminToken });
-    } else {
-        res.status(401).json({ error: 'Invalid password' });
+app.post('/v1/auth/login', async (req, res, next) => {
+  try {
+    const { phone, password } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6 || !password) {
+      throw new HttpError(400, 'بيانات الدخول غير كاملة');
     }
+    const user = await getUserByPhone(normalised);
+    if (!user || !user.password_hash) {
+      throw new HttpError(400, 'بيانات الدخول غير صحيحة');
+    }
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      throw new HttpError(400, 'بيانات الدخول غير صحيحة');
+    }
+    const token = signUserToken(user);
+    res.json({ success: true, token, user: serialiseUserProfile(user), role: user.role });
+  } catch (error) {
+    next(error);
+  }
 });
 
-// 2. Middleware للتحقق من المشرف
-const authenticateAdmin = (req, res, next) => {
+app.post('/v1/auth/password/set', authenticateSetPassword, async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || password.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    const hash = await bcrypt.hash(password, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+    const freshUser = await getUserById(req.user.id);
+    const token = signUserToken(freshUser);
+    res.json({ success: true, token, user: serialiseUserProfile(freshUser), role: freshUser.role });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/forgot', async (req, res, next) => {
+  try {
+    const { phone } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
+    }
+    const user = await getUserByPhone(normalised);
+    if (!user) {
+      throw new HttpError(404, 'لا يوجد مستخدم مرتبط بهذا الرقم');
+    }
+    const payload = await requestOtpForPhone(normalised);
+    res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/reset', async (req, res, next) => {
+  try {
+    const { phone, code, new_password: newPassword } = req.body || {};
+    const normalised = normalisePhone(phone);
+    if (!normalised || normalised.length < 6) {
+      throw new HttpError(400, 'يرجى إدخال رقم هاتف صحيح');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    await consumeOtp(normalised, code);
+    const user = await getUserByPhone(normalised);
+    if (!user) {
+      throw new HttpError(404, 'المستخدم غير موجود');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+    const freshUser = await getUserById(user.id);
+    const token = signUserToken(freshUser);
+    res.json({ success: true, token, user: serialiseUserProfile(freshUser), role: freshUser.role });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/me', authenticate, async (req, res, next) => {
+  try {
+    res.json(serialiseUserProfile(req.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/v1/me', authenticate, async (req, res, next) => {
+  try {
+    const { first_name, last_name, dob, gender } = req.body || {};
+    const updates = [];
+    const params = [];
+
+    if (first_name !== undefined) {
+      const value = first_name ? String(first_name).trim() : null;
+      updates.push('first_name = ?');
+      params.push(value || null);
+    }
+    if (last_name !== undefined) {
+      const value = last_name ? String(last_name).trim() : null;
+      updates.push('last_name = ?');
+      params.push(value || null);
+    }
+    if (dob !== undefined) {
+      updates.push('dob = ?');
+      params.push(dob ? String(dob).trim() : null);
+    }
+    if (gender !== undefined) {
+      const normalisedGender = gender ? String(gender).toLowerCase() : null;
+      if (normalisedGender && !['male', 'female', 'other'].includes(normalisedGender)) {
+        throw new HttpError(400, 'قيمة النوع غير مدعومة');
+      }
+      updates.push('gender = ?');
+      params.push(normalisedGender);
+    }
+
+    if (updates.length) {
+      params.push(req.user.id);
+      await dbRun(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    const freshUser = await getUserById(req.user.id);
+    res.json({ success: true, user: serialiseUserProfile(freshUser) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/auth/password/change', authenticate, async (req, res, next) => {
+  try {
+    const { old_password: oldPassword, new_password: newPassword } = req.body || {};
+    if (!newPassword || newPassword.length < 6) {
+      throw new HttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    }
+    if (!req.user.password_hash) {
+      throw new HttpError(400, 'لم يتم تعيين كلمة مرور لهذا الحساب بعد');
+    }
+    const valid = await bcrypt.compare(oldPassword || '', req.user.password_hash);
+    if (!valid) {
+      throw new HttpError(400, 'كلمة المرور الحالية غير صحيحة');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+    const freshUser = await getUserById(req.user.id);
+    res.json({ success: true, user: serialiseUserProfile(freshUser) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Auth middleware ---
+async function authenticate(req, res, next) {
+  try {
     const token = req.headers.authorization?.split(' ')[1];
-    if (token && token === adminToken) {
-        next();
+    if (!token) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+    let payload;
+    try {
+      payload = jwt.verify(token, CONFIG.jwtSecret);
+    } catch (error) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+    if (payload.purp) {
+      throw new HttpError(401, 'يتطلب هذا الإجراء جلسة دخول كاملة');
+    }
+    const user = await getUserById(payload.sub);
+    if (!user) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+    req.user = user;
+    req.jwt = payload;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function authenticateWithPurpose(purpose) {
+  return async (req, res, next) => {
+    try {
+      const token = req.headers.authorization?.split(' ')[1];
+      if (!token) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      let payload;
+      try {
+        payload = jwt.verify(token, CONFIG.jwtSecret);
+      } catch (error) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      if (payload.purp !== purpose) {
+        throw new HttpError(403, 'رمز غير صالح لهذه العملية');
+      }
+      const user = await getUserById(payload.sub);
+      if (!user) {
+        throw new HttpError(401, 'Unauthorized');
+      }
+      req.user = user;
+      req.jwt = payload;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+// --- Driver Management ---
+app.post('/api/drivers/register', authenticate, async (req, res, next) => {
+  try {
+    const { name, vehicleType, licensePlate, phoneNumber } = req.body || {};
+    if (!name || !vehicleType || !licensePlate || !phoneNumber) {
+      throw new HttpError(400, 'Name, phone number, vehicle type, and license plate are required');
+    }
+
+    const existingDriver = await getDriverById(req.user.id);
+    if (existingDriver) {
+      throw new HttpError(409, 'Driver already registered');
+    }
+
+    await dbRun('UPDATE users SET name = ?, role = ?, phone_number = ? WHERE id = ?', [
+      name,
+      'driver',
+      phoneNumber,
+      req.user.id
+    ]);
+    await dbRun(
+      'INSERT INTO drivers (user_id, vehicle_type, license_plate, verified, availability_status) VALUES (?, ?, ?, 0, ?)',
+      [req.user.id, vehicleType, licensePlate, 'offline']
+    );
+
+    res.status(201).json({ success: true, message: 'Registration submitted.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/drivers/me', authenticate, async (req, res, next) => {
+  try {
+    const driver = await getDriverById(req.user.id);
+    res.json({
+      success: true,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        phoneNumber: req.user.phone_number,
+        name: req.user.name,
+        role: req.user.role
+      },
+      driver: driver
+        ? {
+            userId: driver.user_id,
+            vehicleType: driver.vehicle_type,
+            licensePlate: driver.license_plate,
+            verified: Boolean(driver.verified),
+            availabilityStatus: driver.availability_status
+          }
+        : null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/drivers/status', authenticate, async (req, res, next) => {
+  try {
+    const { status } = req.body || {};
+    if (!status || !['online', 'offline'].includes(status)) {
+      throw new HttpError(400, 'Status must be "online" or "offline"');
+    }
+
+    const driver = await getDriverById(req.user.id);
+    if (!driver) {
+      throw new HttpError(404, 'Driver profile not found');
+    }
+    if (!driver.verified) {
+      throw new HttpError(403, 'Driver not verified');
+    }
+
+    if (status === 'offline') {
+      const activeOrder = await dbGet(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [req.user.id, ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED, ORDER_STATUS.CREATED]
+      );
+      if (activeOrder) {
+        throw new HttpError(400, 'Cannot go offline while delivering an order');
+      }
+    }
+
+    await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+      status,
+      req.user.id
+    ]);
+
+    if (status === 'online') {
+      await assignPendingOrders();
+    }
+
+    res.json({ success: true, status });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/drivers/active-order', authenticate, async (req, res, next) => {
+  try {
+    const row = await dbGet(
+      `SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?) ORDER BY created_at DESC LIMIT 1`,
+      [
+        req.user.id,
+        ORDER_STATUS.DELIVERED,
+        ORDER_STATUS.CANCELLED,
+        ORDER_STATUS.CREATED
+      ]
+    );
+    if (!row) {
+      return res.json(null);
+    }
+    const details = await getOrderDetails(row.id);
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Orders & Quotes ---
+app.post('/api/quote', authenticate, async (req, res, next) => {
+  try {
+    const { pickup, dropoff } = req.body || {};
+    if (!pickup || !dropoff) {
+      throw new HttpError(400, 'Pickup and dropoff locations are required');
+    }
+
+    const quote = await quoteTrip(pickup, dropoff);
+    res.json(quote);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      next(error);
+      return;
+    }
+    console.error('Quote service failed', error);
+    next(new HttpError(503, 'خدمة التوجيه غير متاحة مؤقتًا'));
+  }
+});
+
+app.post('/api/orders', authenticate, async (req, res, next) => {
+  try {
+    const { pickup, dropoff, paymentMethod: paymentMethodRaw } = req.body || {};
+    if (!pickup || !dropoff) {
+      throw new HttpError(400, 'Pickup and dropoff locations are required');
+    }
+
+    const quote = await quoteTrip(pickup, dropoff);
+
+    const paymentMethod = (paymentMethodRaw || 'cash').toLowerCase();
+    if (!['cash', 'card'].includes(paymentMethod)) {
+      throw new HttpError(400, 'Unsupported payment method');
+    }
+
+    const pickupLabel = pickup.label || req.body?.pickupLabel || null;
+    const dropoffLabel = dropoff.label || req.body?.dropoffLabel || null;
+    const paymentStatus = paymentMethod === 'card' ? 'pending' : 'pending';
+    const priceTotal = quote.price;
+
+    const pinCode = genCode6();
+    const insert = await dbRun(
+      `INSERT INTO orders (
+          customer_id,
+          pickup_lat,
+          pickup_lng,
+          dropoff_lat,
+          dropoff_lng,
+          price,
+          price_total,
+          distance_km,
+          status,
+          payment_method,
+          payment_status,
+          pickup_label,
+          dropoff_label,
+          pin_code
+        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        pickup.lat,
+        pickup.lng,
+        dropoff.lat,
+        dropoff.lng,
+        quote.price,
+        priceTotal,
+        quote.distanceKm,
+        ORDER_STATUS.CREATED,
+        paymentMethod,
+        paymentStatus,
+        pickupLabel,
+        dropoffLabel,
+        pinCode
+      ]
+    );
+
+    const orderId = insert.lastID;
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [
+      ORDER_STATUS.SEARCHING_DRIVER,
+      orderId
+    ]);
+
+    const createdDetails = await getOrderDetails(orderId);
+    emitToCustomer(req.user.id, 'order:created', createdDetails);
+    io.to(`order_${orderId}`).emit('order:created', createdDetails);
+
+    const assigned = await assignDriverToOrder(orderId);
+    const details = await getOrderDetails(orderId);
+
+    if (!assigned) {
+      res.status(202).json({ ...details, reason: 'NO_DRIVER' });
     } else {
-        res.status(401).json({ error: 'Unauthorized Admin' });
+      res.status(201).json(details);
     }
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/orders/:id/cancel', authenticate, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (!order) {
+      throw new HttpError(404, 'Order not found');
+    }
+    if (order.customer_id !== req.user.id) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    if (order.status === ORDER_STATUS.DELIVERED || order.status === ORDER_STATUS.CANCELLED) {
+      throw new HttpError(400, 'Order can no longer be cancelled');
+    }
+
+    await dbRun('UPDATE orders SET status = ? WHERE id = ?', [ORDER_STATUS.CANCELLED, orderId]);
+    if (order.driver_id) {
+      await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+        'online',
+        order.driver_id
+      ]);
+      emitToDriver(order.driver_id, 'order:cancelled', await getOrderDetails(orderId));
+    }
+
+    await emitOrderStatus(orderId);
+    res.json({ success: true });
+    await assignPendingOrders();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/orders/history', authenticate, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      'SELECT id FROM orders WHERE customer_id = ? ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    const history = [];
+    for (const row of rows) {
+      const details = await getOrderDetails(row.id);
+      if (details) {
+        history.push(details);
+      }
+    }
+    res.json(history);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/orders/my', authenticate, async (req, res, next) => {
+  try {
+    const role = (req.query.role || req.user.role || 'customer').toLowerCase();
+    let rows;
+    if (role === 'driver') {
+      rows = await dbAll(
+        `SELECT id, status, price_total, price, payment_method, payment_status, created_at, pickup_label, dropoff_label
+           FROM orders
+          WHERE driver_id = ?
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [req.user.id]
+      );
+    } else {
+      rows = await dbAll(
+        `SELECT id, status, price_total, price, payment_method, payment_status, created_at, pickup_label, dropoff_label
+           FROM orders
+          WHERE customer_id = ?
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [req.user.id]
+      );
+    }
+    const history = rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      priceTotal:
+        row.price_total != null
+          ? Number(row.price_total)
+          : row.price != null
+          ? Number(row.price)
+          : null,
+      paymentMethod: row.payment_method || 'cash',
+      paymentStatus: row.payment_status || 'pending',
+      createdAt: row.created_at,
+      pickupLabel: row.pickup_label || null,
+      dropoffLabel: row.dropoff_label || null
+    }));
+    res.json(history);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/orders/:id', authenticate, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isFinite(orderId)) {
+      throw new HttpError(400, 'Invalid order id');
+    }
+    const details = await getOrderDetails(orderId);
+    if (!details) {
+      throw new HttpError(404, 'Order not found');
+    }
+    const isCustomer = details.customer.id === req.user.id;
+    const isDriver = details.driver?.id === req.user.id;
+    if (!isCustomer && !isDriver) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/addresses/my', authenticate, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, label, lat, lng, created_at
+         FROM addresses
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 50`,
+      [req.user.id]
+    );
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        label: row.label || '',
+        lat: Number(row.lat),
+        lng: Number(row.lng),
+        createdAt: row.created_at
+      }))
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/addresses', authenticate, async (req, res, next) => {
+  try {
+    const { label, lat, lng } = req.body || {};
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new HttpError(400, 'Valid coordinates are required');
+    }
+    const name = typeof label === 'string' ? label.trim() : '';
+    const insert = await dbRun(
+      'INSERT INTO addresses (user_id, label, lat, lng) VALUES (?, ?, ?, ?)',
+      [req.user.id, name, latitude, longitude]
+    );
+    res.status(201).json({
+      id: insert.lastID,
+      label: name,
+      lat: latitude,
+      lng: longitude
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/v1/addresses/:id', authenticate, async (req, res, next) => {
+  try {
+    const addressId = Number(req.params.id);
+    if (!Number.isFinite(addressId)) {
+      throw new HttpError(400, 'Invalid address id');
+    }
+    const address = await dbGet('SELECT user_id FROM addresses WHERE id = ?', [addressId]);
+    if (!address) {
+      throw new HttpError(404, 'Address not found');
+    }
+    if (address.user_id !== req.user.id) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    await dbRun('DELETE FROM addresses WHERE id = ?', [addressId]);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/pay/paymob/init', authenticate, payLimiter, async (req, res, next) => {
+  try {
+    if (CONFIG.payProvider !== 'paymob') {
+      throw new HttpError(503, 'Card payments are not enabled');
+    }
+    if (!CONFIG.paymobApiKey || !CONFIG.paymobIntegrationIdCard || !CONFIG.paymobIframeId) {
+      throw new HttpError(503, 'Paymob credentials are not fully configured');
+    }
+    const { orderId } = req.body || {};
+    const numericOrderId = Number(orderId);
+    if (!Number.isFinite(numericOrderId)) {
+      throw new HttpError(400, 'A valid orderId is required');
+    }
+    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [numericOrderId]);
+    if (!order) {
+      throw new HttpError(404, 'Order not found');
+    }
+    if (order.customer_id !== req.user.id) {
+      throw new HttpError(403, 'You can only pay for your own orders');
+    }
+    const method = (order.payment_method || 'cash').toLowerCase();
+    if (method !== 'card') {
+      throw new HttpError(400, 'This order is not configured for card payment');
+    }
+    if (order.payment_status === 'paid') {
+      return res.json({ iframe_url: null, status: 'paid' });
+    }
+    const priceSource =
+      order.price_total != null
+        ? Number(order.price_total)
+        : order.price != null
+        ? Number(order.price)
+        : null;
+    if (!Number.isFinite(priceSource) || priceSource <= 0) {
+      throw new HttpError(400, 'Order amount is not valid for payment');
+    }
+    const amountCents = Math.max(1, Math.round(priceSource * 100));
+    const authToken = await paymobClient.getAuthToken();
+    const merchantOrderId = `order-${numericOrderId}-${Date.now()}`;
+    const paymobOrder = await paymobClient.createOrder(authToken, amountCents, merchantOrderId);
+    const billingName = (req.user.name || `${APP_NAME} Customer`).split(' ');
+    const billingData = {
+      apartment: 'NA',
+      email: req.user.email || `${req.user.id}@mandubo.local`,
+      floor: 'NA',
+      first_name: billingName[0] || APP_NAME,
+      street: order.pickup_label || 'Pickup',
+      building: 'NA',
+      phone_number: req.user.phone_number || '0000000000',
+      shipping_method: 'Courier',
+      postal_code: '00000',
+      city: 'Cairo',
+      country: 'EGY',
+      last_name: billingName.slice(1).join(' ') || 'Customer',
+      state: 'Cairo'
+    };
+    const paymentToken = await paymobClient.getPaymentKey(authToken, {
+      orderId: paymobOrder.id,
+      amountCents,
+      billingData,
+      integrationId: CONFIG.paymobIntegrationIdCard
+    });
+    const iframeUrl = paymobClient.buildIframeUrl(paymentToken);
+
+    await dbRun(
+      'INSERT INTO payments (order_id, provider, amount_cents, currency, status, provider_ref, raw) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [
+        numericOrderId,
+        'paymob',
+        amountCents,
+        'EGP',
+        'pending',
+        String(paymobOrder.id),
+        JSON.stringify({ order: paymobOrder })
+      ]
+    );
+
+    await dbRun('UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?', [
+      'pending',
+      'card',
+      numericOrderId
+    ]);
+
+    res.json({ iframe_url: iframeUrl, payment_token: paymentToken });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/pay/paymob/webhook', async (req, res, next) => {
+  try {
+    if (CONFIG.payProvider !== 'paymob') {
+      return res.json({ ok: true });
+    }
+    if (!verifyPaymobHmac(req.body, CONFIG.paymobHmacSecret)) {
+      throw new HttpError(401, 'Invalid signature');
+    }
+    const transaction = req.body.obj;
+    const paymobOrderId = transaction?.order?.id ? String(transaction.order.id) : null;
+    let orderId = null;
+    const merchantOrderId = transaction?.order?.merchant_order_id;
+    if (merchantOrderId) {
+      const match = String(merchantOrderId).match(/order-(\d+)/);
+      if (match) {
+        orderId = Number(match[1]);
+      }
+    }
+    if (!orderId && paymobOrderId) {
+      const paymentRow = await dbGet(
+        'SELECT order_id FROM payments WHERE provider = ? AND provider_ref = ? ORDER BY id DESC LIMIT 1',
+        ['paymob', paymobOrderId]
+      );
+      if (paymentRow) {
+        orderId = Number(paymentRow.order_id);
+      }
+    }
+    if (!orderId) {
+      throw new HttpError(404, 'Order reference not found');
+    }
+    const success = transaction?.success === true && transaction?.pending === false;
+    const status = success ? 'paid' : 'failed';
+    const rawJson = JSON.stringify(transaction);
+    if (paymobOrderId) {
+      const update = await dbRun(
+        'UPDATE payments SET status = ?, raw = ? WHERE provider = ? AND provider_ref = ?',
+        [status, rawJson, 'paymob', paymobOrderId]
+      );
+      if (!update.changes) {
+        await dbRun(
+          'INSERT INTO payments (order_id, provider, amount_cents, currency, status, provider_ref, raw) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [orderId, 'paymob', Number(transaction.amount_cents || 0), transaction.currency || 'EGP', status, paymobOrderId, rawJson]
+        );
+      }
+    }
+    await dbRun('UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?', [
+      status,
+      'card',
+      orderId
+    ]);
+    await emitOrderStatus(orderId);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/v1/payments/:orderId/last', authenticate, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!Number.isFinite(orderId)) {
+      throw new HttpError(400, 'Invalid order id');
+    }
+    const details = await getOrderDetails(orderId);
+    if (!details) {
+      throw new HttpError(404, 'Order not found');
+    }
+    const isCustomer = details.customer?.id === req.user.id;
+    const isDriver = details.driver?.id === req.user.id;
+    if (!isCustomer && !isDriver) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    const payment = await dbGet(
+      'SELECT status, raw FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1',
+      [orderId]
+    );
+    if (!payment) {
+      return res.json({ status: null, reason: null });
+    }
+    let reason = null;
+    if (payment.raw) {
+      try {
+        const parsed = JSON.parse(payment.raw);
+        if (parsed && typeof parsed === 'object') {
+          reason =
+            parsed?.data?.message ||
+            parsed?.data?.txn_response_message ||
+            parsed?.data?.gateway_response ||
+            parsed?.message ||
+            (parsed?.order?.error_occured ? 'error_occured' : null) ||
+            (parsed?.error_occured ? 'transaction_declined' : null);
+          if (Array.isArray(parsed?.log) && !reason) {
+            const msg = parsed.log.find((entry) => typeof entry?.message === 'string');
+            if (msg) {
+              reason = msg.message;
+            }
+          }
+        }
+      } catch (parseError) {
+        console.warn('Failed to parse payment raw JSON', parseError);
+      }
+    }
+    res.json({ status: payment.status || null, reason: reason || null });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/orders/active', authenticate, async (req, res, next) => {
+  try {
+    const row = await dbGet(
+      `SELECT id FROM orders WHERE customer_id = ? AND status NOT IN (?, ?, ?) ORDER BY created_at DESC LIMIT 1`,
+      [
+        req.user.id,
+        ORDER_STATUS.DELIVERED,
+        ORDER_STATUS.CANCELLED,
+        ORDER_STATUS.CREATED
+      ]
+    );
+    if (!row) {
+      return res.json(null);
+    }
+    const details = await getOrderDetails(row.id);
+    res.json(details);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Admin Endpoints ---
+app.post('/api/admin/login', async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (password !== CONFIG.adminPassword) {
+      throw new HttpError(401, 'Invalid password');
+    }
+    adminToken = crypto.randomBytes(32).toString('hex');
+    res.json({ success: true, token: adminToken });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function authenticateAdmin(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token && token === adminToken) {
+    return next();
+  }
+  next(new HttpError(401, 'Unauthorized admin'));
+}
+
+app.get('/api/admin/drivers', authenticateAdmin, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT u.id, u.name, u.phone_number, d.vehicle_type, d.license_plate, d.verified, d.availability_status, d.last_lat, d.last_lng
+         FROM drivers d
+         JOIN users u ON u.id = d.user_id`
+    );
+    const list = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      phoneNumber: row.phone_number,
+      vehicleType: row.vehicle_type,
+      licensePlate: row.license_plate,
+      verified: Boolean(row.verified),
+      availabilityStatus: row.availability_status,
+      lastLocation: row.last_lat != null && row.last_lng != null ? { lat: Number(row.last_lat), lng: Number(row.last_lng) } : null
+    }));
+    res.json(list);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/drivers/:id/verify', authenticateAdmin, async (req, res, next) => {
+  try {
+    const driverId = Number(req.params.id);
+    const { verified } = req.body || {};
+    const update = await dbRun('UPDATE drivers SET verified = ? WHERE user_id = ?', [
+      verified ? 1 : 0,
+      driverId
+    ]);
+    if (!update.changes) {
+      throw new HttpError(404, 'Driver not found');
+    }
+    if (!verified) {
+      await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+        'offline',
+        driverId
+      ]);
+    } else {
+      await assignPendingOrders();
+    }
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/payments', authenticateAdmin, async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, order_id, provider, amount_cents, currency, status, provider_ref, created_at
+         FROM payments
+        ORDER BY created_at DESC
+        LIMIT 100`
+    );
+    const list = rows.map((row) => {
+      const amountCents = Number(row.amount_cents || 0);
+      return {
+        id: row.id,
+        orderId: row.order_id,
+        provider: row.provider,
+        amount: amountCents / 100,
+        amountCents,
+        currency: row.currency || 'EGP',
+        status: row.status || 'pending',
+        providerRef: row.provider_ref || null,
+        createdAt: row.created_at
+      };
+    });
+    res.json(list);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Socket.IO Authentication ---
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    if (!token) {
+      throw new Error('Unauthorized');
+    }
+    let payload;
+    try {
+      payload = jwt.verify(token, CONFIG.jwtSecret);
+    } catch (error) {
+      throw new Error('Unauthorized');
+    }
+    const user = await getUserById(payload.sub);
+    if (!user) {
+      throw new Error('Unauthorized');
+    }
+    socket.data.userId = user.id;
+    socket.data.role = user.role;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+io.on('connection', (socket) => {
+  const userId = socket.data.userId;
+  const role = socket.data.role;
+
+  if (role === 'driver') {
+    driverSockets.set(userId, socket);
+  } else {
+    customerSockets.set(userId, socket);
+  }
+
+  socket.on('order:join', async ({ orderId }) => {
+    if (!orderId) {
+      return;
+    }
+    const order = await dbGet('SELECT customer_id, driver_id FROM orders WHERE id = ?', [orderId]);
+    if (!order) {
+      return;
+    }
+    if (order.customer_id === userId || order.driver_id === userId) {
+      socket.join(`order_${orderId}`);
+      const details = await getOrderDetails(orderId);
+      if (details) {
+        socket.emit('order:status', details);
+      }
+    }
+  });
+
+  if (role === 'driver') {
+    socket.on('driver:send_location', async ({ lat, lng }) => {
+      if (typeof lat !== 'number' || typeof lng !== 'number') {
+        return;
+      }
+      await dbRun('UPDATE drivers SET last_lat = ?, last_lng = ? WHERE user_id = ?', [
+        lat,
+        lng,
+        userId
+      ]);
+      const rows = await dbAll(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [
+          userId,
+          ORDER_STATUS.DELIVERED,
+          ORDER_STATUS.CANCELLED,
+          ORDER_STATUS.CREATED
+        ]
+      );
+      for (const row of rows) {
+        const orderDetails = await getOrderDetails(row.id);
+        if (!orderDetails) {
+          continue;
+        }
+        const payload = {
+          orderId: row.id,
+          driverId: userId,
+          lat,
+          lng,
+          updatedAt: new Date().toISOString()
+        };
+        io.to(`order_${row.id}`).emit('driver:location', payload);
+        emitToCustomer(orderDetails.customer.id, 'driver:location', payload);
+      }
+    });
+
+    socket.on('driver:update_status', async ({ orderId, status }) => {
+      if (!orderId || !status) {
+        return;
+      }
+      const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
+      if (!order || order.driver_id !== userId) {
+        return;
+      }
+      const allowed = ORDER_TRANSITIONS[order.status] || [];
+      if (!allowed.includes(status)) {
+        return;
+      }
+      await dbRun('UPDATE orders SET status = ? WHERE id = ?', [status, orderId]);
+      if (status === ORDER_STATUS.DELIVERED) {
+        await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+          'online',
+          userId
+        ]);
+        await assignPendingOrders();
+      }
+      await emitOrderStatus(orderId);
+      await requestDriverStatusUpdate(orderId, userId);
+    });
+  }
+
+  socket.on('disconnect', async () => {
+    if (role === 'driver') {
+      driverSockets.delete(userId);
+      const active = await dbGet(
+        'SELECT id FROM orders WHERE driver_id = ? AND status NOT IN (?, ?, ?)',
+        [
+          userId,
+          ORDER_STATUS.DELIVERED,
+          ORDER_STATUS.CANCELLED,
+          ORDER_STATUS.CREATED
+        ]
+      );
+      if (!active) {
+        await dbRun('UPDATE drivers SET availability_status = ? WHERE user_id = ?', [
+          'offline',
+          userId
+        ]);
+      }
+    } else {
+      customerSockets.delete(userId);
+    }
+  });
+});
+
+// --- Error handling ---
+// Ensure JSON errors are consistent across the API; stack traces stay in dev only.
+app.use((err, req, res, next) => {
+  const status = err instanceof HttpError ? err.status : err.status || 500;
+  const payload = {
+    status,
+    message: err.message || 'Internal Server Error'
+  };
+  if (err instanceof HttpError && err.extra) {
+    Object.assign(payload, err.extra);
+  }
+  if (process.env.NODE_ENV !== 'production' && err.stack) {
+    payload.stack = err.stack;
+  }
+  res.status(status).json(payload);
+});
+
+async function bootstrap() {
+  try {
+    await initDatabase();
+    server.listen(CONFIG.port, () => {
+      console.log(`Server listening on port ${CONFIG.port}`);
+      console.log(
+        `Allowed CORS origins: ${uniqueAllowList.length ? uniqueAllowList.join(', ') : 'none'}`
+      );
+    });
+  } catch (error) {
+    console.error('Failed to start server', error);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  bootstrap();
+}
+
+module.exports = {
+  app,
+  server,
+  initDatabase,
+  closeDatabase,
+  CONFIG,
+  bootstrap
 };
-
-// 3. جلب كل المناديب
-app.get('/api/admin/drivers', authenticateAdmin, (req, res) => {
-    const sql = `
-        SELECT u.id, u.name, u.phone_number, d.vehicle_type, d.license_plate, d.verified
-        FROM users u
-        JOIN drivers d ON u.id = d.user_id
-        ORDER BY d.verified ASC, u.created_at DESC
-    `;
-    db.all(sql, [], (err, rows) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).json({ error: 'Failed to retrieve drivers.' });
-        }
-        res.status(200).json(rows);
-    });
-});
-
-// 4. تفعيل حساب مندوب
-app.post('/api/admin/drivers/:id/verify', authenticateAdmin, (req, res) => {
-    const driverId = req.params.id;
-    const { verified } = req.body; // Expects { verified: true }
-
-    if (typeof verified !== 'boolean') {
-        return res.status(400).json({ error: 'A boolean "verified" status is required.' });
-    }
-
-    const sql = `UPDATE drivers SET verified = ? WHERE user_id = ?`;
-    db.run(sql, [verified, driverId], function(err) {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to update driver status.' });
-        }
-        if (this.changes === 0) {
-            return res.status(404).json({ error: 'Driver not found.' });
-        }
-        res.status(200).json({ success: true, message: 'Driver status updated.' });
-    });
-});
-
-
-const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
-
